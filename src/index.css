@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Custom Sports Glass & Gradient effects */
+.court-gradient {
+  background: linear-gradient(135deg, #0f5132 0%, #15803d 50%, #16a34a 100%);
+}
+
+.court-gradient-dark {
+  background: linear-gradient(135deg, #052e16 0%, #0f5132 50%, #166534 100%);
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-only {
+    display: block !important;
+  }
+}

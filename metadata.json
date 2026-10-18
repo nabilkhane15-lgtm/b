@@ -1,0 +1,6 @@
+{
+  "name": "Badminton Club Fund Manager",
+  "description": "Comprehensive Sports & Welfare Club Manager with weekly/monthly fees, demographic age categorization (Child/Teen/Youth), non-playing funding patrons, multi-fund management, savings, tournaments, and picnic budgets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

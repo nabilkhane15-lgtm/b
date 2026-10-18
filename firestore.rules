@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Healthcheck ping for connection test
+    match /_connection_test/{docId} {
+      allow read, write: if request.time < timestamp.date(2027, 12, 31);
+    }
+
+    // Allow public read for club members, and updates with timestamp limit
+    match /clubs/{clubId} {
+      allow read: if true;
+      allow write: if request.time < timestamp.date(2027, 12, 31);
+    }
+
+    match /clubs/{clubId}/{document=**} {
+      allow read: if true;
+      allow write: if request.time < timestamp.date(2027, 12, 31);
+    }
+  }
+}
