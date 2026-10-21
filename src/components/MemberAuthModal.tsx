@@ -481,21 +481,23 @@ export const MemberAuthModal: React.FC<Props> = ({
                 <span>{isBangla ? '✨ নতুন সাইন-আপ' : 'Sign Up'}</span>
               </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveTab('admin');
-                  setAdminError('');
-                }}
-                className={`py-2 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
-                  activeTab === 'admin'
-                    ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm border border-slate-200 dark:border-slate-800'
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Crown className="w-3.5 h-3.5 text-amber-500" />
-                <span>{isBangla ? '👑 অ্যাডমিন' : 'Admin'}</span>
-              </button>
+              {(initialTab === 'admin' || activeTab === 'admin') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('admin');
+                    setAdminError('');
+                  }}
+                  className={`py-2 px-3 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 whitespace-nowrap transition-all ${
+                    activeTab === 'admin'
+                      ? 'bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-sm border border-slate-200 dark:border-slate-800'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  <Crown className="w-3.5 h-3.5 text-amber-500" />
+                  <span>{isBangla ? '👑 অ্যাডমিন' : 'Admin'}</span>
+                </button>
+              )}
             </div>
 
             {/* TAB 1: MEMBER LOGIN */}

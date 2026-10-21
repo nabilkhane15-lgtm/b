@@ -42,9 +42,11 @@ import {
   MessageCircle,
   Share2,
   Globe,
-  Maximize2,
+  Crown,
+  ShieldCheck,
+  Phone,
+  MapPin,
 } from 'lucide-react';
-import { ImageLightboxModal } from '../components/ImageLightboxModal';
 
 interface Props {
   season: Season;
@@ -67,9 +69,9 @@ interface Props {
   onOpenAddExpense: () => void;
   onOpenIdSearch?: () => void;
   onOpenShare?: () => void;
+  onOpenSignUp?: () => void;
   adminProfile?: AdminProfile;
   onOpenAdminProfile?: () => void;
-  onOpenSignUp?: () => void;
 }
 
 export const DashboardView: React.FC<Props> = ({
@@ -93,15 +95,14 @@ export const DashboardView: React.FC<Props> = ({
   onOpenAddExpense,
   onOpenIdSearch,
   onOpenShare,
+  onOpenSignUp,
   adminProfile,
   onOpenAdminProfile,
-  onOpenSignUp,
 }) => {
   const t = translations[lang];
   const isBangla = lang === 'bn';
 
   const [selectedSportFilter, setSelectedSportFilter] = useState<SportType | 'all'>('all');
-  const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
 
   // Sonsoy / Savings vault total
   const totalSavingsPool = savingsDeposits.reduce(
@@ -508,88 +509,87 @@ export const DashboardView: React.FC<Props> = ({
         </a>
       </div>
 
-      {/* Admin / Founder Profile Quick Showcase Card */}
-      {adminProfile && onOpenAdminProfile && (
-        <div className="rounded-3xl bg-gradient-to-r from-emerald-600/10 via-teal-600/10 to-amber-500/10 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-amber-950/20 p-4 sm:p-5 border border-emerald-300/70 dark:border-emerald-800/60 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-4 text-center sm:text-left">
-            <div className="relative shrink-0 group">
-              <div
-                onClick={() => {
-                  if (adminProfile.photoUrl || (adminProfile.photos && adminProfile.photos.length > 0)) {
-                    setIsPhotoLightboxOpen(true);
-                  } else {
-                    onOpenAdminProfile();
-                  }
-                }}
-                className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden bg-white dark:bg-slate-900 border-2 border-emerald-500 shadow-lg p-0.5 flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 relative"
-                title={isBangla ? 'ক্লিক করে পুরো ছবি বড় আকারে দেখুন' : 'Click to view full image'}
-              >
+      {/* 3.0 Founder & Chief Admin Identity Showcase (Informational Only - No Admin Controls) */}
+      {adminProfile && (
+        <div className="rounded-3xl bg-gradient-to-r from-emerald-600/10 via-teal-600/10 to-amber-500/10 dark:from-emerald-950/40 dark:via-teal-950/30 dark:to-amber-950/30 p-4 sm:p-5 border border-emerald-500/20 dark:border-emerald-500/20 shadow-sm relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row items-center sm:items-start gap-4">
+            <div className="relative flex-shrink-0">
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl overflow-hidden ring-2 ring-emerald-500/30 shadow-md bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white text-2xl font-black">
                 {adminProfile.photoUrl ? (
                   <img
                     src={adminProfile.photoUrl}
                     alt={adminProfile.name}
-                    className="w-full h-full object-cover rounded-xl"
+                    className="w-full h-full object-cover"
                   />
                 ) : (
-                  <div className="w-full h-full rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-700 text-white flex items-center justify-center text-2xl font-black">
-                    {adminProfile.name.charAt(0)}
-                  </div>
-                )}
-
-                {/* Hover overlay */}
-                {adminProfile.photoUrl && (
-                  <div className="absolute inset-0.5 rounded-xl bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white">
-                    <Maximize2 className="w-4 h-4 text-emerald-300" />
-                  </div>
+                  <span>👑</span>
                 )}
               </div>
-              <span className="absolute -bottom-1 -right-1 bg-amber-500 text-white text-[9px] font-black px-1.5 py-0.2 rounded-full shadow border border-white">
-                👑
-              </span>
+              <div className="absolute -bottom-1 -right-1 p-1 rounded-full bg-emerald-600 text-white shadow">
+                <ShieldCheck className="w-3.5 h-3.5" />
+              </div>
             </div>
 
-            <div>
-              <div className="flex items-center gap-2 justify-center sm:justify-start flex-wrap">
-                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-500 text-white">
-                  {adminProfile.designation || 'প্রধান অ্যাডমিন'}
+            <div className="flex-1 text-center sm:text-left min-w-0">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1">
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                  <Crown className="w-3 h-3 text-amber-500" />
+                  {isBangla ? 'প্রতিষ্ঠাতা ও প্রধান অ্যাডমিন' : 'Club Founder & Chief Admin'}
                 </span>
-                {adminProfile.photos && adminProfile.photos.length > 1 && (
-                  <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-300 bg-emerald-100 dark:bg-emerald-950/80 px-2 py-0.5 rounded-full">
-                    {adminProfile.photos.length} {isBangla ? 'টি ছবি' : 'Photos'}
+                {adminProfile.location && (
+                  <span className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    {adminProfile.location}
                   </span>
                 )}
-                <span className="text-xs text-slate-500 dark:text-slate-400">
-                  {isBangla ? 'অ্যাপ নির্মাতা ও সমন্বয়ক' : 'Creator & Admin'}
-                </span>
               </div>
-              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white mt-0.5">
-                {isBangla && adminProfile.banglaName ? adminProfile.banglaName : adminProfile.name}
-              </h3>
-              <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-1 max-w-md">
-                {adminProfile.bio}
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center gap-2 self-stretch sm:self-auto justify-center">
-            {adminProfile.whatsappNumber && (
-              <a
-                href={`https://wa.me/${adminProfile.whatsappNumber.replace(/[^0-9]/g, '')}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="WhatsApp"
-                className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 transition-colors"
-              >
-                💬
-              </a>
-            )}
-            <button
-              onClick={onOpenAdminProfile}
-              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold text-xs shadow-sm transition-all flex items-center gap-1.5 active:scale-95 whitespace-nowrap"
-            >
-              <span>👑</span>
-              <span>{isBangla ? 'সম্পূর্ণ পরিচিতি ও সোশ্যাল লিংক' : 'View Admin Profile'}</span>
-            </button>
+              <h3 className="text-base sm:text-lg font-black text-slate-900 dark:text-white truncate">
+                {isBangla ? adminProfile.banglaName || adminProfile.name : adminProfile.name}
+              </h3>
+              <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-1.5">
+                {adminProfile.designation}
+              </p>
+              {adminProfile.bio && (
+                <p className="text-xs text-slate-600 dark:text-slate-300 line-clamp-2 leading-relaxed">
+                  {adminProfile.bio}
+                </p>
+              )}
+
+              {/* Quick Contact & View Profile Buttons */}
+              <div className="mt-3 flex flex-wrap items-center justify-center sm:justify-start gap-2">
+                {onOpenAdminProfile && (
+                  <button
+                    type="button"
+                    onClick={onOpenAdminProfile}
+                    className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white text-xs font-bold shadow-sm flex items-center gap-1.5 transition-transform active:scale-95"
+                  >
+                    <Crown className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isBangla ? 'পরিচিতি বিস্তারিত দেখুন' : 'View Full Profile'}</span>
+                  </button>
+                )}
+                {adminProfile.phone && (
+                  <a
+                    href={`tel:${adminProfile.phone}`}
+                    className="px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 text-xs font-bold hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-1 transition-colors"
+                  >
+                    <Phone className="w-3 h-3 text-emerald-500" />
+                    <span>{adminProfile.phone}</span>
+                  </a>
+                )}
+                {adminProfile.messengerUrl && (
+                  <a
+                    href={adminProfile.messengerUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-2.5 py-1.5 rounded-xl bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-300 text-xs font-bold flex items-center gap-1 transition-colors"
+                  >
+                    <MessageCircle className="w-3 h-3" />
+                    <span>Messenger</span>
+                  </a>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -825,24 +825,6 @@ export const DashboardView: React.FC<Props> = ({
           })}
         </div>
       </div>
-
-      {/* Admin Photo Fullscreen Lightbox */}
-      {adminProfile && (
-        <ImageLightboxModal
-          isOpen={isPhotoLightboxOpen}
-          onClose={() => setIsPhotoLightboxOpen(false)}
-          images={
-            adminProfile.photos && adminProfile.photos.length > 0
-              ? adminProfile.photos
-              : adminProfile.photoUrl
-              ? [adminProfile.photoUrl]
-              : []
-          }
-          title={isBangla && adminProfile.banglaName ? adminProfile.banglaName : adminProfile.name}
-          subtitle={adminProfile.designation || (isBangla ? 'অ্যাপ প্রতিষ্ঠাতা ও প্রধান অ্যাডমিন' : 'Admin & Founder')}
-          lang={lang}
-        />
-      )}
     </div>
   );
 };

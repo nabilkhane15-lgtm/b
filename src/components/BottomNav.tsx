@@ -13,18 +13,31 @@ import {
   Palmtree,
   Coins,
   Crown,
+  User,
+  ShieldCheck,
 } from 'lucide-react';
 
 interface Props {
   activeTab: TabType;
   onChangeTab: (tab: TabType) => void;
   lang: Language;
+  isAdmin?: boolean;
+  isLoggedIn?: boolean;
+  memberName?: string;
 }
 
-export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, lang }) => {
+export const BottomNav: React.FC<Props> = ({
+  activeTab,
+  onChangeTab,
+  lang,
+  isAdmin = false,
+  isLoggedIn = false,
+  memberName,
+}) => {
   const t = translations[lang];
+  const isBangla = lang === 'bn';
 
-  const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
+  const baseTabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: t.nav_dashboard, icon: <LayoutDashboard className="w-4 h-4 sm:w-5 sm:h-5" /> },
     { id: 'leaderboard', label: t.nav_leaderboard, icon: <Crown className="w-4 h-4 sm:w-5 sm:h-5 text-amber-500" /> },
     { id: 'members', label: t.nav_members, icon: <Users className="w-4 h-4 sm:w-5 sm:h-5" /> },
@@ -35,8 +48,33 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, lang }) => 
     { id: 'expenses', label: t.nav_expenses, icon: <ReceiptText className="w-4 h-4 sm:w-5 sm:h-5" /> },
     { id: 'reports', label: t.nav_reports, icon: <BarChart3 className="w-4 h-4 sm:w-5 sm:h-5" /> },
     { id: 'season', label: t.nav_season, icon: <Trophy className="w-4 h-4 sm:w-5 sm:h-5" /> },
-    { id: 'settings', label: t.nav_settings, icon: <Settings className="w-4 h-4 sm:w-5 sm:h-5" /> },
   ];
+
+  // Settings tab visibility:
+  // 1. If Admin: "অ্যাডমিন সেটিংস" (Admin Settings) with ShieldCheck icon
+  // 2. If Logged-in Member: "আমার প্রোফাইল" (My Profile) with User icon
+  // 3. If Anonymous / Not Logged In: COMPLETELY HIDDEN!
+  const tabs = [...baseTabs];
+
+  if (isAdmin) {
+    tabs.push({
+      id: 'settings',
+      label: isBangla ? 'অ্যাডমিন সেটিংস' : 'Admin Settings',
+      icon: <ShieldCheck className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500" />,
+    });
+  } else if (isLoggedIn) {
+    tabs.push({
+      id: 'settings',
+      label: isBangla ? 'আমার সেটিংস' : 'My Settings',
+      icon: <User className="w-4 h-4 sm:w-5 sm:h-5 text-emerald-500" />,
+    });
+  } else {
+    tabs.push({
+      id: 'settings',
+      label: isBangla ? 'সেটিংস' : 'Settings',
+      icon: <Settings className="w-4 h-4 sm:w-5 sm:h-5" />,
+    });
+  }
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 transition-colors shadow-lg">
@@ -60,7 +98,7 @@ export const BottomNav: React.FC<Props> = ({ activeTab, onChangeTab, lang }) => 
                 <div className={`p-1 rounded-lg ${isActive ? 'bg-emerald-50 dark:bg-emerald-950/60' : ''}`}>
                   {tab.icon}
                 </div>
-                <span className="text-[10px] mt-0.5 tracking-tight truncate max-w-[62px]">
+                <span className="text-[10px] mt-0.5 tracking-tight truncate max-w-[66px]">
                   {tab.label}
                 </span>
               </button>

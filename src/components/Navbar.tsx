@@ -40,6 +40,7 @@ interface Props {
   onOpenFirebase?: () => void;
   onOpenShare?: () => void;
   onOpenAdminProfile?: () => void;
+  onNavigateToSettings?: () => void;
 }
 
 export const Navbar: React.FC<Props> = ({
@@ -62,6 +63,7 @@ export const Navbar: React.FC<Props> = ({
   onOpenFirebase,
   onOpenShare,
   onOpenAdminProfile,
+  onNavigateToSettings,
 }) => {
   const t = translations[lang];
   const [copied, setCopied] = useState(false);
@@ -182,7 +184,7 @@ export const Navbar: React.FC<Props> = ({
               </button>
             )}
 
-            {/* Admin / Founder Profile Button */}
+            {/* Admin / Founder Profile Button (Visible to all so visitors can see founder identity; editing restricted to admin) */}
             {onOpenAdminProfile && (
               <button
                 onClick={onOpenAdminProfile}
@@ -277,8 +279,14 @@ export const Navbar: React.FC<Props> = ({
                 {currentLoggedInMember ? (
                   <div className="flex items-center gap-1">
                     <button
-                      onClick={() => onOpenMemberProfile?.(currentLoggedInMember)}
-                      title={isBangla ? 'আমার মেম্বার প্রোফাইল দেখুন' : 'View My Member Profile'}
+                      onClick={() => {
+                        if (onNavigateToSettings) {
+                          onNavigateToSettings();
+                        } else if (onOpenMemberProfile) {
+                          onOpenMemberProfile(currentLoggedInMember);
+                        }
+                      }}
+                      title={isBangla ? 'আমার মেম্বার প্রোফাইল ও সেটিংস দেখুন' : 'View My Member Profile & Settings'}
                       className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 transition-all shadow-sm"
                     >
                       <div className="w-4 h-4 rounded-full overflow-hidden bg-emerald-200 dark:bg-emerald-800 flex items-center justify-center text-[10px]">

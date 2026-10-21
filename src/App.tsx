@@ -98,6 +98,7 @@ import { ReportsView } from './views/ReportsView';
 import { SeasonView } from './views/SeasonView';
 import { SettingsView } from './views/SettingsView';
 import { LeaderboardView } from './views/LeaderboardView';
+import { MemberSettingsView } from './views/MemberSettingsView';
 
 export const App: React.FC = () => {
   // Localization
@@ -225,6 +226,40 @@ export const App: React.FC = () => {
   // Sync admin mode with localStorage
   useEffect(() => {
     localStorage.setItem('badminton_is_admin', String(isAdmin));
+  }, [isAdmin]);
+
+  // Check for /admin or #admin route to trigger Admin login or switch to admin view
+  useEffect(() => {
+    const handleAdminRouteCheck = () => {
+      const path = window.location.pathname.toLowerCase().replace(/\/+$/, '');
+      const hash = window.location.hash.toLowerCase();
+      const search = window.location.search.toLowerCase();
+
+      const isAdminRoute =
+        path === '/admin' ||
+        path.endsWith('/admin') ||
+        hash === '#admin' ||
+        hash === '#/admin' ||
+        hash.startsWith('#admin') ||
+        search.includes('admin');
+
+      if (isAdminRoute) {
+        if (!isAdmin) {
+          setMemberAuthInitialTab('admin');
+          setShowMemberAuthModal(true);
+        } else {
+          setActiveTab('settings');
+        }
+      }
+    };
+
+    handleAdminRouteCheck();
+    window.addEventListener('popstate', handleAdminRouteCheck);
+    window.addEventListener('hashchange', handleAdminRouteCheck);
+    return () => {
+      window.removeEventListener('popstate', handleAdminRouteCheck);
+      window.removeEventListener('hashchange', handleAdminRouteCheck);
+    };
   }, [isAdmin]);
 
   // Listen to BroadcastChannel for real-time synchronization between browser tabs
@@ -379,7 +414,15 @@ export const App: React.FC = () => {
     if (isAdmin || currentSubAdmin) {
       setIsAdmin(false);
       setCurrentSubAdmin(null);
-      showToast(lang === 'bn' ? 'ভিউয়ার মোডে ফিরে আসা হয়েছে' : 'Switched to Viewer Mode');
+      if (
+        window.location.pathname.toLowerCase().endsWith('/admin') ||
+        window.location.pathname.toLowerCase().endsWith('/admin/') ||
+        window.location.hash === '#admin'
+      ) {
+        window.history.replaceState({}, '', '/');
+      }
+      setActiveTab('dashboard');
+      showToast(lang === 'bn' ? 'অ্যাডমিন মোড থেকে বের হয়ে সাধারণ ভিউতে যাওয়া হয়েছে' : 'Switched to Viewer Mode');
     } else {
       handleOpenAuth('admin');
     }
@@ -397,7 +440,19 @@ export const App: React.FC = () => {
     } else {
       setCurrentSubAdmin(null);
       setIsAdmin(true);
+      setActiveTab('settings');
       showToast(lang === 'bn' ? 'প্রধান অ্যাডমিন মোড সক্রিয় হয়েছে! 👑' : 'Master Admin Mode Unlocked! 👑');
+      try {
+        if (
+          window.location.pathname.toLowerCase().endsWith('/admin') ||
+          window.location.pathname.toLowerCase().endsWith('/admin/') ||
+          window.location.hash.toLowerCase().includes('admin')
+        ) {
+          window.history.replaceState({}, '', '/');
+        }
+      } catch {
+        // ignore
+      }
     }
     setShowPinModal(false);
     setShowMemberAuthModal(false);
@@ -418,6 +473,7 @@ export const App: React.FC = () => {
   const handleMemberLoginSuccess = (mem: Member) => {
     setCurrentLoggedInMember(mem);
     saveLoggedInMemberId(mem.id);
+    setActiveTab('settings');
     showToast(
       lang === 'bn'
         ? `স্বাগতম ${mem.banglaName || mem.name}! আপনার মেম্বার পোর্টালে লগইন হয়েছে (#${mem.memberCode}) 👤`
@@ -428,6 +484,7 @@ export const App: React.FC = () => {
   const handleLogoutMember = () => {
     setCurrentLoggedInMember(null);
     saveLoggedInMemberId(null);
+    setActiveTab('dashboard');
     showToast(lang === 'bn' ? 'সদস্য একাউন্ট থেকে লগআউট করা হয়েছে' : 'Logged out from member account');
   };
 
@@ -568,7 +625,10 @@ export const App: React.FC = () => {
     if (selectedMemberProfile && selectedMemberProfile.id === updatedMember.id) {
       setSelectedMemberProfile(updatedMember);
     }
-    showToast(lang === 'bn' ? 'সদস্যের তথ্য হালনাগাদ হয়েছে' : 'Member profile updated');
+    if (currentLoggedInMember && currentLoggedInMember.id === updatedMember.id) {
+      setCurrentLoggedInMember(updatedMember);
+    }
+    showToast(lang === 'bn' ? 'সদস্যের তথ্য সফলভাবে হালনাগাদ হয়েছে' : 'Member profile updated');
   };
 
   // Custom Funds Handlers
@@ -991,6 +1051,7 @@ export const App: React.FC = () => {
         onOpenFirebase={isAdmin ? () => setShowFirebaseModal(true) : undefined}
         onOpenShare={() => setShowShareModal(true)}
         onOpenAdminProfile={() => setShowAdminProfileModal(true)}
+        onNavigateToSettings={() => setActiveTab('settings')}
       />
 
       {/* Main Container */}
@@ -1017,9 +1078,9 @@ export const App: React.FC = () => {
             onOpenAddExpense={() => setShowAddExpenseModal(true)}
             onOpenIdSearch={() => setShowIdSearchModal(true)}
             onOpenShare={() => setShowShareModal(true)}
+            onOpenSignUp={() => handleOpenAuth('signup')}
             adminProfile={adminProfile}
             onOpenAdminProfile={() => setShowAdminProfileModal(true)}
-            onOpenSignUp={() => handleOpenAuth('signup')}
           />
         )}
 
@@ -1166,27 +1227,98 @@ export const App: React.FC = () => {
         )}
 
         {activeTab === 'settings' && (
-          <SettingsView
-            lang={lang}
-            onToggleLang={handleToggleLang}
-            isDark={isDark}
-            onToggleDark={handleToggleDark}
-            isAdmin={isAdmin}
-            onToggleAdmin={handleToggleAdmin}
-            onOpenPinModal={() => handleOpenAuth('admin')}
-            onOpenChangePassword={() => setShowChangePasswordModal(true)}
-            onResetDemo={handleResetDemo}
-            clubSettings={clubSettings}
-            onUpdateClubSettings={handleUpdateClubSettings}
-            onOpenFirebaseModal={isAdmin ? () => setShowFirebaseModal(true) : undefined}
-            adminProfile={adminProfile}
-            onOpenAdminProfile={() => setShowAdminProfileModal(true)}
-          />
+          isAdmin ? (
+            <SettingsView
+              lang={lang}
+              onToggleLang={handleToggleLang}
+              isDark={isDark}
+              onToggleDark={handleToggleDark}
+              isAdmin={isAdmin}
+              onToggleAdmin={handleToggleAdmin}
+              onOpenPinModal={() => handleOpenAuth('admin')}
+              onOpenChangePassword={() => setShowChangePasswordModal(true)}
+              onResetDemo={handleResetDemo}
+              clubSettings={clubSettings}
+              onUpdateClubSettings={handleUpdateClubSettings}
+              onOpenFirebaseModal={isAdmin ? () => setShowFirebaseModal(true) : undefined}
+              adminProfile={adminProfile}
+              onOpenAdminProfile={() => setShowAdminProfileModal(true)}
+            />
+          ) : currentLoggedInMember ? (
+            <MemberSettingsView
+              member={currentLoggedInMember}
+              payments={payments}
+              monthlyPayments={monthlyPayments}
+              savingsDeposits={savingsDeposits}
+              fundContributions={fundContributions}
+              funds={funds}
+              lang={lang}
+              onToggleLang={handleToggleLang}
+              isDark={isDark}
+              onToggleDark={handleToggleDark}
+              onUpdateMember={handleUpdateMember}
+              onLogout={handleLogoutMember}
+              onOpenReceipt={(payment) => {
+                const week = weeks.find((w) => w.id === payment.weekId) || weeks[0];
+                setReceiptTarget({
+                  member: currentLoggedInMember,
+                  payment,
+                  week,
+                });
+              }}
+            />
+          ) : (
+            /* Anonymous Visitor trying to access settings */
+            <div className="max-w-md mx-auto my-12 p-6 sm:p-8 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl text-center space-y-4">
+              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto text-3xl shadow-sm">
+                ⚙️
+              </div>
+              <h3 className="text-lg font-black text-slate-900 dark:text-white">
+                {lang === 'bn' ? 'সেটিংস ও প্রোফাইল' : 'Settings & Profile'}
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed max-w-xs mx-auto">
+                {lang === 'bn'
+                  ? 'আপনার ব্যক্তিগত প্রোফাইল ও সেটিংস দেখতে অনুগ্রহ করে সাইন ইন বা লগইন করুন।'
+                  : 'Please sign in or log in to view and manage your personal profile and settings.'}
+              </p>
+              <div className="pt-2 flex flex-col gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('login')}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 text-white font-bold text-xs shadow-md shadow-emerald-500/20 active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <span>🔑</span>
+                  <span>{lang === 'bn' ? 'সাইন ইন / লগইন করুন' : 'Sign In / Log In'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleOpenAuth('signup')}
+                  className="w-full py-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-bold text-xs hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors"
+                >
+                  {lang === 'bn' ? '✨ নতুন মেম্বার সাইন-আপ' : 'New Member Sign Up'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('dashboard')}
+                  className="w-full py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors"
+                >
+                  {lang === 'bn' ? 'ড্যাশবোর্ডে ফিরে যান' : 'Back to Dashboard'}
+                </button>
+              </div>
+            </div>
+          )
         )}
       </main>
 
       {/* Bottom Tab Bar */}
-      <BottomNav activeTab={activeTab} onChangeTab={setActiveTab} lang={lang} />
+      <BottomNav
+        activeTab={activeTab}
+        onChangeTab={setActiveTab}
+        lang={lang}
+        isAdmin={isAdmin}
+        isLoggedIn={Boolean(currentLoggedInMember)}
+        memberName={currentLoggedInMember?.name}
+      />
 
       {/* Modals */}
       {receiptTarget && (
@@ -1378,7 +1510,20 @@ export const App: React.FC = () => {
       {showMemberAuthModal && (
         <MemberAuthModal
           isOpen={showMemberAuthModal}
-          onClose={() => setShowMemberAuthModal(false)}
+          onClose={() => {
+            setShowMemberAuthModal(false);
+            try {
+              if (
+                window.location.pathname.toLowerCase().endsWith('/admin') ||
+                window.location.pathname.toLowerCase().endsWith('/admin/') ||
+                window.location.hash.toLowerCase().includes('admin')
+              ) {
+                window.history.replaceState({}, '', '/');
+              }
+            } catch {
+              // ignore
+            }
+          }}
           initialTab={memberAuthInitialTab}
           members={members}
           clubSettings={clubSettings}
