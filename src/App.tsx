@@ -201,6 +201,8 @@ export const App: React.FC = () => {
   const [showMemberAuthModal, setShowMemberAuthModal] = useState(false);
   const [memberAuthInitialTab, setMemberAuthInitialTab] = useState<'login' | 'signup' | 'admin'>('login');
   const isRemoteUpdatingRef = useRef(false);
+  const isSavingToCloudRef = useRef(false);
+  const hasCompletedInitialCloudSyncRef = useRef(false);
 
   // Toast message
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -294,9 +296,10 @@ export const App: React.FC = () => {
     let isFirstEvent = true;
     const unsubscribe = subscribeToClubDataSnapshot(
       (cloudData) => {
-        if (!cloudData) return;
+        if (!cloudData || isSavingToCloudRef.current) return;
         isRemoteUpdatingRef.current = true;
-        handleRestoreClubData(cloudData, false);
+        handleRestoreClubData(cloudData, false, isFirstEvent);
+        hasCompletedInitialCloudSyncRef.current = true;
         setTimeout(() => {
           isRemoteUpdatingRef.current = false;
         }, 1200);
@@ -324,22 +327,58 @@ export const App: React.FC = () => {
 
     downloadClubDataFromFirestore()
       .then((res) => {
+        if (isSavingToCloudRef.current) return;
         if (res.success && res.data) {
           isRemoteUpdatingRef.current = true;
-          handleRestoreClubData(res.data, false);
+          handleRestoreClubData(res.data, false, true);
+          hasCompletedInitialCloudSyncRef.current = true;
           setTimeout(() => {
             isRemoteUpdatingRef.current = false;
           }, 1200);
         } else if (isAdmin) {
+          hasCompletedInitialCloudSyncRef.current = true;
           uploadClubDataToFirestore(getAllClubData()).catch(() => {});
         }
       })
       .catch(() => {});
 
+    // Periodic background sync (every 6 seconds) so even if WebSockets are throttled, all browsers stay 100% in sync
+    const pollInterval = setInterval(() => {
+      if (isSavingToCloudRef.current || !isFirebaseSyncEnabled()) return;
+      downloadClubDataFromFirestore()
+        .then((res) => {
+          if (res.success && res.data && !isSavingToCloudRef.current) {
+            isRemoteUpdatingRef.current = true;
+            handleRestoreClubData(res.data, false, false);
+            setTimeout(() => {
+              isRemoteUpdatingRef.current = false;
+            }, 800);
+          }
+        })
+        .catch(() => {});
+    }, 6000);
+
     return () => {
       if (unsubscribe) unsubscribe();
+      clearInterval(pollInterval);
     };
   }, []);
+
+  // Also pull latest cloud snapshot whenever user switches tabs or opens search/login modal
+  useEffect(() => {
+    if (!isFirebaseSyncEnabled() || isSavingToCloudRef.current) return;
+    downloadClubDataFromFirestore()
+      .then((res) => {
+        if (res.success && res.data && !isSavingToCloudRef.current) {
+          isRemoteUpdatingRef.current = true;
+          handleRestoreClubData(res.data, false, false);
+          setTimeout(() => {
+            isRemoteUpdatingRef.current = false;
+          }, 800);
+        }
+      })
+      .catch(() => {});
+  }, [activeTab, showIdSearchModal, showMemberAuthModal]);
 
   // Auto-sync updates to Firestore cloud (debounced 1.2s across all users/actions)
   const isInitialMount = useRef(true);
@@ -348,10 +387,12 @@ export const App: React.FC = () => {
       isInitialMount.current = false;
       return;
     }
-    if (isRemoteUpdatingRef.current) return;
+    if (!hasCompletedInitialCloudSyncRef.current) return;
+    if (isRemoteUpdatingRef.current || isSavingToCloudRef.current) return;
     if (!isFirebaseSyncEnabled()) return;
 
     const timer = setTimeout(async () => {
+      if (isRemoteUpdatingRef.current || isSavingToCloudRef.current) return;
       try {
         const fullData = getAllClubData();
         await uploadClubDataToFirestore(fullData);
@@ -511,18 +552,21 @@ export const App: React.FC = () => {
   // Payment update
   const handleSavePayment = (updated: Payment) => {
     const updatedList = payments.map((p) => (p.id === updated.id ? updated : p));
-    // If it was a new record
     if (!payments.some((p) => p.id === updated.id)) {
       updatedList.push(updated);
     }
     setPayments(updatedList);
     savePayments(updatedList);
     setPaymentEditTarget(null);
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       payments: updatedList,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(lang === 'bn' ? 'পেমেন্ট সফলভাবে সংরক্ষিত হয়েছে' : 'Payment record updated');
   };
 
@@ -542,7 +586,6 @@ export const App: React.FC = () => {
           : p
       );
     } else {
-      // Need to construct payment
       const parts = paymentId.split('-');
       const weekId = parts[1] || activeWeek.id;
       const memberId = parts[2] || '';
@@ -561,11 +604,15 @@ export const App: React.FC = () => {
     }
     setPayments(updatedList);
     savePayments(updatedList);
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       payments: updatedList,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(lang === 'bn' ? 'পেমেন্ট সম্পূর্ণ হিসেবে চিহ্নিত' : 'Marked as Paid');
   };
 
@@ -621,9 +668,20 @@ export const App: React.FC = () => {
       monthlyPayments: newMonthlyPayments,
       adminPin: loadAdminPassword(),
     };
-    uploadClubDataToFirestore(fullPayload).catch((err) => {
-      console.warn('Instant member cloud push failed:', err);
-    });
+    isSavingToCloudRef.current = true;
+    uploadClubDataToFirestore(fullPayload)
+      .then((res) => {
+        if (res.success && res.mergedData?.members) {
+          setMembers(res.mergedData.members);
+          saveMembers(res.mergedData.members);
+        }
+      })
+      .catch((err) => {
+        console.warn('Instant member cloud push failed:', err);
+      })
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
 
     showToast(
       lang === 'bn'
@@ -651,14 +709,22 @@ export const App: React.FC = () => {
     setSavingsDeposits(updatedSavings);
     saveSavingsDeposits(updatedSavings);
 
-    uploadClubDataToFirestore({
-      ...getAllClubData(),
-      members: updatedMembers,
-      payments: updatedPayments,
-      monthlyPayments: updatedMonthlyPayments,
-      savingsDeposits: updatedSavings,
-      adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    isSavingToCloudRef.current = true;
+    uploadClubDataToFirestore(
+      {
+        ...getAllClubData(),
+        members: updatedMembers,
+        payments: updatedPayments,
+        monthlyPayments: updatedMonthlyPayments,
+        savingsDeposits: updatedSavings,
+        adminPin: loadAdminPassword(),
+      },
+      { overwriteMembers: true, deletedMemberId: memberId }
+    )
+      .catch(() => {})
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
 
     showToast(lang === 'bn' ? 'সদস্য অপসারিত হয়েছে' : 'Member removed');
   };
@@ -674,11 +740,22 @@ export const App: React.FC = () => {
     if (currentLoggedInMember && currentLoggedInMember.id === updatedMember.id) {
       setCurrentLoggedInMember(updatedMember);
     }
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       members: updated,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .then((res) => {
+        if (res.success && res.mergedData?.members) {
+          setMembers(res.mergedData.members);
+          saveMembers(res.mergedData.members);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(lang === 'bn' ? 'সদস্যের তথ্য সফলভাবে হালনাগাদ হয়েছে' : 'Member profile updated');
   };
 
@@ -794,6 +871,11 @@ export const App: React.FC = () => {
   const handleUpdateClubSettings = (newSettings: ClubSettings) => {
     setClubSettings(newSettings);
     saveClubSettings(newSettings);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      clubSettings: newSettings,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(
       lang === 'bn' ? 'ক্লাবের তথ্য সফলভাবে আপডেট হয়েছে' : 'Club settings updated successfully'
     );
@@ -934,11 +1016,16 @@ export const App: React.FC = () => {
     setMonthlyPayments(updatedList);
     saveMonthlyPayments(updatedList);
     setMonthlyPaymentTarget(null);
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       monthlyPayments: updatedList,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .catch(() => {})
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(lang === 'bn' ? 'মাসিক চাঁদা সংরক্ষিত হয়েছে' : 'Monthly fee record updated');
   };
 
@@ -951,11 +1038,16 @@ export const App: React.FC = () => {
     setSavingsDeposits(updated);
     saveSavingsDeposits(updated);
     setSavingsModalConfig(null);
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       savingsDeposits: updated,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .catch(() => {})
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(
       lang === 'bn'
         ? deposit.type === 'DEPOSIT'
@@ -969,11 +1061,16 @@ export const App: React.FC = () => {
     const updated = savingsDeposits.filter((s) => s.id !== savingsId);
     setSavingsDeposits(updated);
     saveSavingsDeposits(updated);
+    isSavingToCloudRef.current = true;
     uploadClubDataToFirestore({
       ...getAllClubData(),
       savingsDeposits: updated,
       adminPin: loadAdminPassword(),
-    }).catch(() => {});
+    })
+      .catch(() => {})
+      .finally(() => {
+        isSavingToCloudRef.current = false;
+      });
     showToast(lang === 'bn' ? 'সঞ্চয় লেনদেন মুছে ফেলা হয়েছে' : 'Savings entry deleted');
   };
 
@@ -1017,7 +1114,7 @@ export const App: React.FC = () => {
     adminPin: loadAdminPassword(),
   });
 
-  const handleRestoreClubData = (data: any, notifyToast: boolean = true) => {
+  const handleRestoreClubData = (data: any, notifyToast: boolean = true, isInitialSync: boolean = false) => {
     if (data.adminPin) {
       saveAdminPinFromCloud(data.adminPin);
     }
@@ -1029,16 +1126,41 @@ export const App: React.FC = () => {
       setAdminProfile(data.adminProfile);
       saveAdminProfile(data.adminProfile);
     }
-    if (data.members) {
-      setMembers(data.members);
-      saveMembers(data.members);
+
+    const deletedSet = new Set<string>(data.deletedMemberIds || []);
+    let needsPushUnsyncedMembers = false;
+    let finalMembersList: Member[] = Array.isArray(data.members)
+      ? data.members.filter((m: Member) => m && m.id && !deletedSet.has(m.id))
+      : [];
+
+    if (Array.isArray(data.members)) {
+      // Check if this browser has any newly registered real members (id starting with 'm-') that haven't synced to cloud yet
+      const localStored = loadMembers();
+      const cloudIds = new Set(finalMembersList.map((m) => m.id));
+      const unsyncedRealLocal = localStored.filter(
+        (lm) =>
+          lm &&
+          lm.id &&
+          String(lm.id).startsWith('m-') &&
+          !deletedSet.has(lm.id) &&
+          !cloudIds.has(lm.id)
+      );
+
+      if (unsyncedRealLocal.length > 0) {
+        finalMembersList = [...finalMembersList, ...unsyncedRealLocal];
+        needsPushUnsyncedMembers = true;
+      }
+
+      setMembers(finalMembersList);
+      saveMembers(finalMembersList);
       if (currentLoggedInMember) {
-        const found = data.members.find((m: Member) => m.id === currentLoggedInMember.id);
+        const found = finalMembersList.find((m: Member) => m.id === currentLoggedInMember.id);
         if (found) {
           setCurrentLoggedInMember(found);
         }
       }
     }
+
     if (data.seasons) {
       setSeasons(data.seasons);
       saveSeasons(data.seasons);
@@ -1091,6 +1213,19 @@ export const App: React.FC = () => {
       setLeaderboardAwards(data.leaderboardAwards);
       saveLeaderboardAwards(data.leaderboardAwards);
     }
+
+    // If this browser had unsynced real members in localStorage (e.g. signed up while offline or before fix), push them to cloud immediately!
+    if (needsPushUnsyncedMembers && isInitialSync) {
+      uploadClubDataToFirestore({
+        ...data,
+        members: finalMembersList,
+        payments: loadPayments(),
+        monthlyPayments: loadMonthlyPayments(),
+        savingsDeposits: loadSavingsDeposits(),
+        adminPin: data.adminPin || loadAdminPassword(),
+      }).catch((e) => console.warn('Failed to push unsynced local members:', e));
+    }
+
     if (notifyToast) {
       showToast(lang === 'bn' ? 'ফায়ারবেস থেকে সব ডাটা রিস্টোর হয়েছে' : 'Data restored from Firebase');
     }

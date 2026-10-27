@@ -1,9 +1,11 @@
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import {
   getFirestore,
+  initializeFirestore,
   doc,
   setDoc,
   getDoc,
+  deleteDoc,
   collection,
   getDocs,
   writeBatch,
@@ -36,6 +38,14 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseConfig = {
 };
 
 export const DEFAULT_FIREBASE_PROJECT_ID = 'badminton-7ae79';
+
+/**
+ * Deeply removes all `undefined` properties from any object/array before writing to Firestore
+ */
+export function sanitizeForFirestore<T>(obj: T): T {
+  if (obj === undefined || obj === null) return obj;
+  return JSON.parse(JSON.stringify(obj));
+}
 
 // Attempt to load default from env or preset if available
 function getInitialConfig(): FirebaseConfig | null {
@@ -86,12 +96,8 @@ export function isFirebaseConfigured(): boolean {
 }
 
 export function isFirebaseSyncEnabled(): boolean {
-  const stored = localStorage.getItem(FIREBASE_SYNC_ENABLED_KEY);
-  if (stored === null) {
-    // If not set explicitly, default to enabled if configured
-    return isFirebaseConfigured();
-  }
-  return stored === 'true';
+  // Always enable cloud sync when Firebase is configured so all browsers stay in sync
+  return isFirebaseConfigured();
 }
 
 export function setFirebaseSyncEnabled(enabled: boolean) {
@@ -104,11 +110,9 @@ export function setFirebaseSyncEnabled(enabled: boolean) {
 export function getPublicShareUrl(): string {
   try {
     const origin = window.location.origin;
-    // If running in AI Studio dev environment (ais-dev-...), convert to pre-shared public URL (ais-pre-...)
     if (origin.includes('ais-dev-')) {
       return origin.replace('ais-dev-', 'ais-pre-');
     }
-    // Fallback if inside an iframe or local development
     if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
       return 'https://ais-pre-anosqim3lp7ie6rj7snjfg-925458645186.asia-southeast1.run.app';
     }
@@ -121,7 +125,6 @@ export function getPublicShareUrl(): string {
 export function saveFirebaseConfig(config: FirebaseConfig): boolean {
   try {
     localStorage.setItem(FIREBASE_CONFIG_KEY, JSON.stringify(config));
-    // Reset instances to reinitialize
     activeApp = null;
     activeDb = null;
     getFirestoreDb();
@@ -167,7 +170,11 @@ export function getFirestoreDb(): Firestore | null {
   if (!app) return null;
 
   try {
-    activeDb = getFirestore(app);
+    try {
+      activeDb = initializeFirestore(app, { ignoreUndefinedProperties: true });
+    } catch {
+      activeDb = getFirestore(app);
+    }
     return activeDb;
   } catch (error) {
     console.error('Error getting Firestore instance:', error);
@@ -191,13 +198,15 @@ export async function testFirebaseConnection(customConfig?: FirebaseConfig): Pro
       };
     }
 
-    // Initialize temporary test app if custom config
-    let testApp: FirebaseApp;
     const testAppName = `test-${Date.now()}`;
-    testApp = initializeApp(config, testAppName);
-    const db = getFirestore(testApp);
+    const testApp = initializeApp(config, testAppName);
+    let db: Firestore;
+    try {
+      db = initializeFirestore(testApp, { ignoreUndefinedProperties: true });
+    } catch {
+      db = getFirestore(testApp);
+    }
 
-    // Try writing and reading a lightweight healthcheck doc
     const pingDocRef = doc(db, '_connection_test', 'ping');
     await setDoc(pingDocRef, {
       lastPing: Timestamp.now(),
@@ -239,120 +248,218 @@ export async function testFirebaseConnection(customConfig?: FirebaseConfig): Pro
 }
 
 /**
- * Uploads all club data to Firestore
+ * Uploads all club data to Firestore with automatic undefined sanitization and multi-browser member merging
  */
-export async function uploadClubDataToFirestore(data: {
-  clubSettings?: any;
-  adminProfile?: any;
-  adminPin?: string;
-  seasons?: any[];
-  members?: any[];
-  weeks?: any[];
-  months?: any[];
-  payments?: any[];
-  monthlyPayments?: any[];
-  savingsDeposits?: any[];
-  expenses?: any[];
-  tournaments?: any[];
-  picnics?: any[];
-  customFunds?: any[];
-  fundContributions?: any[];
-  fundExpenses?: any[];
-  leaderboardAwards?: any[];
-}): Promise<{ success: boolean; count: number; error?: string }> {
+export async function uploadClubDataToFirestore(
+  rawData: {
+    clubSettings?: any;
+    adminProfile?: any;
+    adminPin?: string;
+    seasons?: any[];
+    members?: any[];
+    weeks?: any[];
+    months?: any[];
+    payments?: any[];
+    monthlyPayments?: any[];
+    savingsDeposits?: any[];
+    expenses?: any[];
+    tournaments?: any[];
+    picnics?: any[];
+    customFunds?: any[];
+    fundContributions?: any[];
+    fundExpenses?: any[];
+    leaderboardAwards?: any[];
+    deletedMemberIds?: string[];
+  },
+  options?: {
+    overwriteMembers?: boolean;
+    deletedMemberId?: string;
+    isPasswordUpdate?: boolean;
+  }
+): Promise<{ success: boolean; count: number; error?: string; mergedData?: any }> {
   const db = getFirestoreDb();
   if (!db) {
     return { success: false, count: 0, error: 'Firebase সংযুক্ত নয়।' };
   }
 
   try {
-    const clubId = data.clubSettings?.clubName ? 'primary_club' : 'default_club';
+    // Strip all undefined fields so Firestore never rejects the payload
+    const data = sanitizeForFirestore(rawData);
+    const clubId = 'primary_club';
     let totalItems = 0;
+
+    const fullSnapshotRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
+    let existingData: any = null;
+    try {
+      const existingSnap = await getDoc(fullSnapshotRef);
+      if (existingSnap.exists()) {
+        existingData = existingSnap.data();
+      }
+    } catch (e) {
+      console.warn('Could not read existing snapshot before merge:', e);
+    }
+
+    // Track deleted member IDs so deleted members never get resurrected by another browser
+    const deletedSet = new Set<string>(existingData?.deletedMemberIds || data.deletedMemberIds || []);
+    if (options?.deletedMemberId) {
+      deletedSet.add(options.deletedMemberId);
+      try {
+        await deleteDoc(doc(db, `clubs/${clubId}/members`, options.deletedMemberId));
+      } catch {
+        // ignore
+      }
+    }
+    const deletedMemberIds = Array.from(deletedSet);
+
+    // Smart merge members across browsers unless overwriteMembers is explicitly set
+    let finalMembers = Array.isArray(data.members) ? [...data.members] : [];
+    if (!options?.overwriteMembers && existingData && Array.isArray(existingData.members)) {
+      const cloudMembers: any[] = existingData.members.filter(
+        (cm: any) => cm && cm.id && !deletedSet.has(cm.id)
+      );
+      const cloudIds = new Set(cloudMembers.map((cm: any) => cm.id));
+
+      // Keep local members that are either already in cloud OR are newly created real members (id starts with 'm-')
+      const validLocalMembers = finalMembers.filter(
+        (lm: any) =>
+          lm &&
+          lm.id &&
+          !deletedSet.has(lm.id) &&
+          (cloudIds.has(lm.id) || String(lm.id).startsWith('m-'))
+      );
+
+      const mergedMap = new Map<string, any>();
+      for (const cm of cloudMembers) {
+        mergedMap.set(cm.id, cm);
+      }
+      for (const lm of validLocalMembers) {
+        mergedMap.set(lm.id, { ...(mergedMap.get(lm.id) || {}), ...lm });
+      }
+      finalMembers = Array.from(mergedMap.values());
+    } else {
+      finalMembers = finalMembers.filter((m: any) => m && m.id && !deletedSet.has(m.id));
+    }
+
+    const validMemberIds = new Set(finalMembers.map((m: any) => m.id));
+
+    // Also merge payments, monthlyPayments, and savingsDeposits by ID for valid members
+    let finalPayments = Array.isArray(data.payments) ? [...data.payments] : [];
+    if (!options?.overwriteMembers && existingData && Array.isArray(existingData.payments)) {
+      const payMap = new Map<string, any>();
+      for (const cp of existingData.payments) {
+        if (cp && cp.id && (!cp.memberId || validMemberIds.has(cp.memberId))) {
+          payMap.set(cp.id, cp);
+        }
+      }
+      for (const lp of finalPayments) {
+        if (lp && lp.id && (!lp.memberId || validMemberIds.has(lp.memberId))) {
+          const prev = payMap.get(lp.id);
+          // Prefer PAID/PARTIAL over UNPAID if another browser already recorded payment
+          if (prev && prev.status !== 'UNPAID' && lp.status === 'UNPAID') {
+            continue;
+          }
+          payMap.set(lp.id, lp);
+        }
+      }
+      finalPayments = Array.from(payMap.values());
+    }
+
+    let finalMonthlyPayments = Array.isArray(data.monthlyPayments) ? [...data.monthlyPayments] : [];
+    if (!options?.overwriteMembers && existingData && Array.isArray(existingData.monthlyPayments)) {
+      const mPayMap = new Map<string, any>();
+      for (const cmp of existingData.monthlyPayments) {
+        if (cmp && cmp.id && (!cmp.memberId || validMemberIds.has(cmp.memberId))) {
+          mPayMap.set(cmp.id, cmp);
+        }
+      }
+      for (const lmp of finalMonthlyPayments) {
+        if (lmp && lmp.id && (!lmp.memberId || validMemberIds.has(lmp.memberId))) {
+          const prev = mPayMap.get(lmp.id);
+          if (prev && prev.status !== 'UNPAID' && lmp.status === 'UNPAID') {
+            continue;
+          }
+          mPayMap.set(lmp.id, lmp);
+        }
+      }
+      finalMonthlyPayments = Array.from(mPayMap.values());
+    }
+
+    let finalSavings = Array.isArray(data.savingsDeposits) ? [...data.savingsDeposits] : [];
+    if (!options?.overwriteMembers && existingData && Array.isArray(existingData.savingsDeposits)) {
+      const savMap = new Map<string, any>();
+      for (const cs of existingData.savingsDeposits) {
+        if (cs && cs.id && (!cs.memberId || validMemberIds.has(cs.memberId))) {
+          savMap.set(cs.id, cs);
+        }
+      }
+      for (const ls of finalSavings) {
+        if (ls && ls.id && (!ls.memberId || validMemberIds.has(ls.memberId))) {
+          savMap.set(ls.id, ls);
+        }
+      }
+      finalSavings = Array.from(savMap.values());
+    }
+
+    // Preserve custom adminPin from cloud if this browser still has default '1234'
+    let effectiveAdminPin = data.adminPin;
+    if (!options?.isPasswordUpdate) {
+      const cloudPin = existingData?.adminPin || (await fetchAdminPinFromFirestore());
+      if (cloudPin && cloudPin !== '1234' && (!effectiveAdminPin || effectiveAdminPin === '1234')) {
+        effectiveAdminPin = cloudPin;
+      }
+    }
 
     // 1. Save general club metadata and state
     const clubDocRef = doc(db, 'clubs', clubId);
-    const clubPayload: any = {
-      settings: data.clubSettings || {},
+    const clubPayload: any = sanitizeForFirestore({
+      settings: data.clubSettings || existingData?.clubSettings || {},
       updatedAt: Timestamp.now(),
-    };
-    if (data.adminPin) {
-      clubPayload.adminPin = data.adminPin;
+    });
+    clubPayload.updatedAt = Timestamp.now();
+    if (effectiveAdminPin) {
+      clubPayload.adminPin = effectiveAdminPin;
     }
     if (data.adminProfile) {
-      clubPayload.adminProfile = data.adminProfile;
+      clubPayload.adminProfile = sanitizeForFirestore(data.adminProfile);
     }
     await setDoc(clubDocRef, clubPayload, { merge: true });
     totalItems++;
 
     // 1b. If adminPin provided, also sync directly to dedicated security doc
-    if (data.adminPin) {
+    if (effectiveAdminPin) {
       const secRef = doc(db, `clubs/${clubId}/security`, 'admin');
-      await setDoc(secRef, { pin: data.adminPin, updatedAt: Timestamp.now() }, { merge: true });
+      await setDoc(secRef, { pin: effectiveAdminPin, updatedAt: Timestamp.now() }, { merge: true });
     }
 
     // 2. Batch write members
-    if (data.members && data.members.length > 0) {
+    if (finalMembers.length > 0) {
       const batch = writeBatch(db);
-      for (const m of data.members) {
-        const ref = doc(db, `clubs/${clubId}/members`, m.id);
-        batch.set(ref, m, { merge: true });
+      for (const m of finalMembers) {
+        const cleanM = sanitizeForFirestore(m);
+        const ref = doc(db, `clubs/${clubId}/members`, cleanM.id);
+        batch.set(ref, cleanM, { merge: true });
         totalItems++;
       }
       await batch.commit();
     }
 
-    // 3. Batch write seasons
-    if (data.seasons && data.seasons.length > 0) {
-      const batch = writeBatch(db);
-      for (const s of data.seasons) {
-        const ref = doc(db, `clubs/${clubId}/seasons`, s.id);
-        batch.set(ref, s, { merge: true });
-        totalItems++;
-      }
-      await batch.commit();
-    }
-
-    // 4. Batch write weeks
-    if (data.weeks && data.weeks.length > 0) {
-      const batch = writeBatch(db);
-      for (const w of data.weeks) {
-        const ref = doc(db, `clubs/${clubId}/weeks`, w.id);
-        batch.set(ref, w, { merge: true });
-        totalItems++;
-      }
-      await batch.commit();
-    }
-
-    // 5. Batch write payments
-    if (data.payments && data.payments.length > 0) {
-      const batch = writeBatch(db);
-      for (const p of data.payments) {
-        const ref = doc(db, `clubs/${clubId}/payments`, p.id);
-        batch.set(ref, p, { merge: true });
-        totalItems++;
-      }
-      await batch.commit();
-    }
-
-    // 6. Batch write expenses
-    if (data.expenses && data.expenses.length > 0) {
-      const batch = writeBatch(db);
-      for (const exp of data.expenses) {
-        const ref = doc(db, `clubs/${clubId}/expenses`, exp.id);
-        batch.set(ref, exp, { merge: true });
-        totalItems++;
-      }
-      await batch.commit();
-    }
-
-    // 7. Store entire snapshot for quick restore and live onSnapshot broadcast
-    const fullSnapshotRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
-    await setDoc(fullSnapshotRef, {
+    // 3. Store entire sanitized snapshot for quick restore and live onSnapshot broadcast
+    const snapshotPayload = sanitizeForFirestore({
       ...data,
+      members: finalMembers,
+      payments: finalPayments,
+      monthlyPayments: finalMonthlyPayments,
+      savingsDeposits: finalSavings,
+      adminPin: effectiveAdminPin || '1234',
+      deletedMemberIds,
+    });
+
+    await setDoc(fullSnapshotRef, {
+      ...snapshotPayload,
       uploadedAt: Timestamp.now(),
     });
 
-    return { success: true, count: totalItems };
+    return { success: true, count: totalItems, mergedData: snapshotPayload };
   } catch (err: any) {
     console.error('Failed to upload club data to Firestore:', err);
     return {
@@ -364,7 +471,7 @@ export async function uploadClubDataToFirestore(data: {
 }
 
 /**
- * Downloads latest club snapshot from Firestore
+ * Downloads latest club snapshot from Firestore (and guarantees latest adminPin is included)
  */
 export async function downloadClubDataFromFirestore(): Promise<{
   success: boolean;
@@ -378,11 +485,17 @@ export async function downloadClubDataFromFirestore(): Promise<{
 
   try {
     const clubId = 'primary_club';
-    const snapshotRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
-    const docSnap = await getDoc(snapshotRef);
+    const [docSnap, latestPin] = await Promise.all([
+      getDoc(doc(db, `clubs/${clubId}/snapshots`, 'latest')),
+      fetchAdminPinFromFirestore(),
+    ]);
 
     if (docSnap.exists()) {
-      return { success: true, data: docSnap.data() };
+      const snapData = docSnap.data();
+      if (latestPin) {
+        snapData.adminPin = latestPin;
+      }
+      return { success: true, data: snapData };
     }
 
     // If snapshot doesn't exist, try club settings
@@ -394,7 +507,7 @@ export async function downloadClubDataFromFirestore(): Promise<{
         success: true,
         data: {
           clubSettings: clubData.settings,
-          adminPin: clubData.adminPin,
+          adminPin: latestPin || clubData.adminPin,
           adminProfile: clubData.adminProfile,
         },
       };
@@ -415,19 +528,16 @@ export async function syncAdminPinToFirestore(pin: string): Promise<boolean> {
   if (!db) return false;
   try {
     const clubId = 'primary_club';
-    // 1. Update in primary club doc
     await setDoc(
       doc(db, 'clubs', clubId),
       { adminPin: pin, updatedAt: Timestamp.now() },
       { merge: true }
     );
-    // 2. Update in snapshots/latest doc so onSnapshot fires for other clients
     await setDoc(
       doc(db, `clubs/${clubId}/snapshots`, 'latest'),
       { adminPin: pin, updatedAt: Timestamp.now() },
       { merge: true }
     );
-    // 3. Update dedicated security doc
     await setDoc(
       doc(db, `clubs/${clubId}/security`, 'admin'),
       { pin, updatedAt: Timestamp.now() },
@@ -448,21 +558,18 @@ export async function fetchAdminPinFromFirestore(): Promise<string | null> {
   if (!db) return null;
   try {
     const clubId = 'primary_club';
-    // Check security doc first
     const secRef = doc(db, `clubs/${clubId}/security`, 'admin');
     const secSnap = await getDoc(secRef);
     if (secSnap.exists() && secSnap.data()?.pin) {
       return String(secSnap.data().pin);
     }
 
-    // Check snapshots/latest
     const snapRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
     const snapDoc = await getDoc(snapRef);
     if (snapDoc.exists() && snapDoc.data()?.adminPin) {
       return String(snapDoc.data().adminPin);
     }
 
-    // Check club doc
     const clubRef = doc(db, 'clubs', clubId);
     const clubDoc = await getDoc(clubRef);
     if (clubDoc.exists() && clubDoc.data()?.adminPin) {
@@ -478,7 +585,7 @@ export async function fetchAdminPinFromFirestore(): Promise<string | null> {
 
 /**
  * Subscribes to real-time changes of the club data from Firestore
- * Whenever any admin updates data on any device, all other connected devices get updated instantly!
+ * Whenever any user or admin updates data on any device, all other connected browsers get updated instantly!
  */
 export function subscribeToClubDataSnapshot(
   onData: (data: any) => void,
