@@ -281,8 +281,7 @@ export const FundsView: React.FC<Props> = ({
       setTargetMemberForPay(member);
       setPayMemberId(member.id);
       const existing = contributions.find((c) => c.fundId === fund.id && c.memberId === member.id);
-      const due = existing ? Math.max(0, existing.expectedAmount - existing.paidAmount) : fund.defaultTargetPerMember || 500;
-      setPayAmount(due || fund.defaultTargetPerMember || 500);
+      setPayAmount(existing ? existing.paidAmount : (fund.defaultTargetPerMember || 500));
     } else {
       setTargetMemberForPay(null);
       setPayMemberId('');
@@ -293,19 +292,37 @@ export const FundsView: React.FC<Props> = ({
     setIsCollectPaymentOpen(true);
   };
 
+  const handleQuickSetContribution = (fund: CustomFund, memberId: string, newPaidAmount: number) => {
+    const existingIndex = contributions.findIndex(
+      (c) => c.fundId === fund.id && c.memberId === memberId
+    );
+    if (existingIndex < 0) return;
+    const existing = contributions[existingIndex];
+    const newStatus: PaymentStatus =
+      newPaidAmount >= existing.expectedAmount ? 'PAID' : newPaidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+    const updatedContribs = [...contributions];
+    updatedContribs[existingIndex] = {
+      ...existing,
+      paidAmount: newPaidAmount,
+      status: newStatus,
+      date: newPaidAmount > 0 ? formatDate() : '',
+    };
+    onSaveContributions(updatedContribs);
+  };
+
   const handleSaveCollectPayment = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeFundForAction || !payMemberId || payAmount === '' || Number(payAmount) <= 0) return;
+    if (!activeFundForAction || !payMemberId || payAmount === '' || Number(payAmount) < 0) return;
 
     const amount = Number(payAmount);
     const existingIndex = contributions.findIndex(
       (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
     );
 
-    let updatedContribs = [...contributions];
+    const updatedContribs = [...contributions];
     if (existingIndex >= 0) {
       const existing = updatedContribs[existingIndex];
-      const newPaid = existing.paidAmount + amount;
+      const newPaid = amount;
       const newStatus: PaymentStatus =
         newPaid >= existing.expectedAmount ? 'PAID' : newPaid > 0 ? 'PARTIAL' : 'UNPAID';
 
@@ -313,14 +330,14 @@ export const FundsView: React.FC<Props> = ({
         ...existing,
         paidAmount: newPaid,
         status: newStatus,
-        date: formatDate(),
+        date: newPaid > 0 ? formatDate() : '',
         paymentMethod: payMethod,
         notes: payNotes.trim() || existing.notes,
       };
     } else {
       // New contribution record
-      const expected = activeFundForAction.defaultTargetPerMember || amount;
-      const status: PaymentStatus = amount >= expected ? 'PAID' : 'PARTIAL';
+      const expected = activeFundForAction.defaultTargetPerMember || amount || 500;
+      const status: PaymentStatus = amount >= expected ? 'PAID' : amount > 0 ? 'PARTIAL' : 'UNPAID';
       updatedContribs.push({
         id: `fc-${Date.now()}-${payMemberId}`,
         fundId: activeFundForAction.id,
@@ -328,7 +345,7 @@ export const FundsView: React.FC<Props> = ({
         expectedAmount: expected,
         paidAmount: amount,
         status,
-        date: formatDate(),
+        date: amount > 0 ? formatDate() : '',
         paymentMethod: payMethod,
         notes: payNotes.trim(),
       });
@@ -873,12 +890,38 @@ export const FundsView: React.FC<Props> = ({
                                     <td className="px-4 py-3 text-right">
                                       <div className="flex items-center justify-end gap-1.5">
                                         {isAdmin && (
-                                          <button
-                                            onClick={() => handleOpenCollectPayment(fund, member)}
-                                            className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 font-bold text-[11px] border border-emerald-200 dark:border-emerald-800"
-                                          >
-                                            {isBangla ? 'টাকা জমা' : 'Pay'}
-                                          </button>
+                                          <>
+                                            {contrib.status !== 'PAID' && (
+                                              <button
+                                                onClick={() =>
+                                                  handleQuickSetContribution(
+                                                    fund,
+                                                    contrib.memberId,
+                                                    contrib.expectedAmount
+                                                  )
+                                                }
+                                                className="px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 font-bold text-[10px]"
+                                              >
+                                                {isBangla ? 'পরিশোধিত' : 'Mark Paid'}
+                                              </button>
+                                            )}
+                                            {contrib.status !== 'UNPAID' && (
+                                              <button
+                                                onClick={() =>
+                                                  handleQuickSetContribution(fund, contrib.memberId, 0)
+                                                }
+                                                className="px-2 py-1 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 hover:bg-rose-100 font-bold text-[10px] border border-rose-200 dark:border-rose-800"
+                                              >
+                                                {isBangla ? 'বকেয়া করুন' : 'Mark Unpaid'}
+                                              </button>
+                                            )}
+                                            <button
+                                              onClick={() => handleOpenCollectPayment(fund, member)}
+                                              className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 font-bold text-[11px]"
+                                            >
+                                              {isBangla ? 'এডিট' : 'Edit'}
+                                            </button>
+                                          </>
                                         )}
                                         {due > 0 && member?.phone && (
                                           <button
@@ -1187,14 +1230,49 @@ export const FundsView: React.FC<Props> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  {isBangla ? 'জমার পরিমাণ (৳)' : 'Contribution Amount (৳)'} *
+                  {isBangla ? 'মোট পরিশোধিত পরিমাণ (৳)' : 'Total Paid Amount (৳)'} *
                 </label>
+                <div className="grid grid-cols-3 gap-1.5 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const existing = contributions.find(
+                        (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
+                      );
+                      setPayAmount(existing ? existing.expectedAmount : (activeFundForAction.defaultTargetPerMember || 500));
+                    }}
+                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                  >
+                    ✅ {isBangla ? 'পূর্ণ পরিশোধ' : 'Full Paid'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const existing = contributions.find(
+                        (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
+                      );
+                      const exp = existing ? existing.expectedAmount : (activeFundForAction.defaultTargetPerMember || 500);
+                      setPayAmount(Math.round(exp / 2));
+                    }}
+                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"
+                  >
+                    ⏳ {isBangla ? 'আংশিক (অর্ধেক)' : 'Half Paid'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPayAmount(0)}
+                    className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800"
+                  >
+                    ❌ {isBangla ? 'বকেয়া (৳০)' : 'Unpaid (৳0)'}
+                  </button>
+                </div>
                 <input
                   type="number"
+                  min={0}
                   required
                   value={payAmount}
                   onChange={(e) => setPayAmount(e.target.value === '' ? '' : Number(e.target.value))}
-                  placeholder="500"
+                  placeholder="0"
                   className="w-full px-3 py-2 text-sm font-bold rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>

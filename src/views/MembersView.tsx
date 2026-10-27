@@ -26,7 +26,13 @@ interface Props {
   isAdmin: boolean;
   onSelectMember: (member: Member) => void;
   onUpdatePayment: (member: Member, payment: Payment) => void;
-  onQuickMark: (paymentId: string, status: PaymentStatus, expected: number) => void;
+  onQuickMark: (
+    paymentId: string,
+    status: PaymentStatus,
+    expected: number,
+    memberId?: string,
+    weekId?: string
+  ) => void;
   onOpenReceipt: (member: Member, payment: Payment, week: Week) => void;
   onOpenAddMember: () => void;
   onDeleteMember?: (memberId: string) => void;
@@ -323,11 +329,22 @@ export const MembersView: React.FC<Props> = ({
                           {pay.status !== 'PAID' && (
                             <button
                               onClick={() =>
-                                onQuickMark(pay.id, 'PAID', pay.expectedAmount)
+                                onQuickMark(pay.id, 'PAID', pay.expectedAmount, member.id, activeWeek.id)
                               }
                               className="px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-500"
                             >
                               {t.mark_paid}
+                            </button>
+                          )}
+                          {pay.status !== 'UNPAID' && (
+                            <button
+                              onClick={() =>
+                                onQuickMark(pay.id, 'UNPAID', pay.expectedAmount, member.id, activeWeek.id)
+                              }
+                              className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 hover:bg-rose-100"
+                              title={isBangla ? 'বকেয়া হিসেবে চিহ্নিত করুন' : 'Mark as Unpaid'}
+                            >
+                              {isBangla ? 'বকেয়া করুন' : 'Mark Unpaid'}
                             </button>
                           )}
                           <button
@@ -497,11 +514,22 @@ export const MembersView: React.FC<Props> = ({
                               {pay.status !== 'PAID' && (
                                 <button
                                   onClick={() =>
-                                    onQuickMark(pay.id, 'PAID', pay.expectedAmount)
+                                    onQuickMark(pay.id, 'PAID', pay.expectedAmount, member.id, activeWeek.id)
                                   }
                                   className="px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-500 shadow-sm"
                                 >
                                   {t.mark_paid}
+                                </button>
+                              )}
+                              {pay.status !== 'UNPAID' && (
+                                <button
+                                  onClick={() =>
+                                    onQuickMark(pay.id, 'UNPAID', pay.expectedAmount, member.id, activeWeek.id)
+                                  }
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 hover:bg-rose-100"
+                                  title={isBangla ? 'বকেয়া হিসেবে চিহ্নিত করুন' : 'Mark as Unpaid'}
+                                >
+                                  {isBangla ? 'বকেয়া করুন' : 'Mark Unpaid'}
                                 </button>
                               )}
                               <button

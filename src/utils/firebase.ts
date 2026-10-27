@@ -275,6 +275,7 @@ export async function uploadClubDataToFirestore(
     overwriteMembers?: boolean;
     deletedMemberId?: string;
     isPasswordUpdate?: boolean;
+    mergeCollections?: boolean;
   }
 ): Promise<{ success: boolean; count: number; error?: string; mergedData?: any }> {
   const db = getFirestoreDb();
@@ -341,51 +342,92 @@ export async function uploadClubDataToFirestore(
     }
 
     const validMemberIds = new Set(finalMembers.map((m: any) => m.id));
+    const finalWeeks = Array.isArray(data.weeks) ? data.weeks : existingData?.weeks || [];
+    const validWeekIds = new Set(finalWeeks.map((w: any) => w?.id).filter(Boolean));
+    const finalMonths = Array.isArray(data.months) ? data.months : existingData?.months || [];
+    const validMonthIds = new Set(finalMonths.map((m: any) => m?.id).filter(Boolean));
 
-    // Also merge payments, monthlyPayments, and savingsDeposits by ID for valid members
+    // Merge payments by ID for valid members & valid weeks, always letting the latest local update win (including PAID -> UNPAID)
     let finalPayments = Array.isArray(data.payments) ? [...data.payments] : [];
     if (!options?.overwriteMembers && existingData && Array.isArray(existingData.payments)) {
       const payMap = new Map<string, any>();
       for (const cp of existingData.payments) {
-        if (cp && cp.id && (!cp.memberId || validMemberIds.has(cp.memberId))) {
+        if (
+          cp &&
+          cp.id &&
+          cp.memberId &&
+          validMemberIds.has(cp.memberId) &&
+          (!cp.weekId || validWeekIds.size === 0 || validWeekIds.has(cp.weekId))
+        ) {
           payMap.set(cp.id, cp);
         }
       }
       for (const lp of finalPayments) {
-        if (lp && lp.id && (!lp.memberId || validMemberIds.has(lp.memberId))) {
-          const prev = payMap.get(lp.id);
-          // Prefer PAID/PARTIAL over UNPAID if another browser already recorded payment
-          if (prev && prev.status !== 'UNPAID' && lp.status === 'UNPAID') {
-            continue;
-          }
+        if (
+          lp &&
+          lp.id &&
+          lp.memberId &&
+          validMemberIds.has(lp.memberId) &&
+          (!lp.weekId || validWeekIds.size === 0 || validWeekIds.has(lp.weekId))
+        ) {
           payMap.set(lp.id, lp);
         }
       }
       finalPayments = Array.from(payMap.values());
+    } else {
+      finalPayments = finalPayments.filter(
+        (lp: any) =>
+          lp &&
+          lp.id &&
+          lp.memberId &&
+          validMemberIds.has(lp.memberId) &&
+          (!lp.weekId || validWeekIds.size === 0 || validWeekIds.has(lp.weekId))
+      );
     }
 
     let finalMonthlyPayments = Array.isArray(data.monthlyPayments) ? [...data.monthlyPayments] : [];
     if (!options?.overwriteMembers && existingData && Array.isArray(existingData.monthlyPayments)) {
       const mPayMap = new Map<string, any>();
       for (const cmp of existingData.monthlyPayments) {
-        if (cmp && cmp.id && (!cmp.memberId || validMemberIds.has(cmp.memberId))) {
+        if (
+          cmp &&
+          cmp.id &&
+          cmp.memberId &&
+          validMemberIds.has(cmp.memberId) &&
+          (!cmp.monthId || validMonthIds.size === 0 || validMonthIds.has(cmp.monthId))
+        ) {
           mPayMap.set(cmp.id, cmp);
         }
       }
       for (const lmp of finalMonthlyPayments) {
-        if (lmp && lmp.id && (!lmp.memberId || validMemberIds.has(lmp.memberId))) {
-          const prev = mPayMap.get(lmp.id);
-          if (prev && prev.status !== 'UNPAID' && lmp.status === 'UNPAID') {
-            continue;
-          }
+        if (
+          lmp &&
+          lmp.id &&
+          lmp.memberId &&
+          validMemberIds.has(lmp.memberId) &&
+          (!lmp.monthId || validMonthIds.size === 0 || validMonthIds.has(lmp.monthId))
+        ) {
           mPayMap.set(lmp.id, lmp);
         }
       }
       finalMonthlyPayments = Array.from(mPayMap.values());
+    } else {
+      finalMonthlyPayments = finalMonthlyPayments.filter(
+        (lmp: any) =>
+          lmp &&
+          lmp.id &&
+          lmp.memberId &&
+          validMemberIds.has(lmp.memberId) &&
+          (!lmp.monthId || validMonthIds.size === 0 || validMonthIds.has(lmp.monthId))
+      );
     }
 
-    let finalSavings = Array.isArray(data.savingsDeposits) ? [...data.savingsDeposits] : [];
-    if (!options?.overwriteMembers && existingData && Array.isArray(existingData.savingsDeposits)) {
+    let finalSavings = Array.isArray(data.savingsDeposits)
+      ? data.savingsDeposits.filter(
+          (ls: any) => ls && ls.id && (!ls.memberId || validMemberIds.has(ls.memberId))
+        )
+      : [];
+    if (options?.mergeCollections && existingData && Array.isArray(existingData.savingsDeposits)) {
       const savMap = new Map<string, any>();
       for (const cs of existingData.savingsDeposits) {
         if (cs && cs.id && (!cs.memberId || validMemberIds.has(cs.memberId))) {
@@ -452,6 +494,7 @@ export async function uploadClubDataToFirestore(
       savingsDeposits: finalSavings,
       adminPin: effectiveAdminPin || '1234',
       deletedMemberIds,
+      clientUpdatedAt: Date.now(),
     });
 
     await setDoc(fullSnapshotRef, {

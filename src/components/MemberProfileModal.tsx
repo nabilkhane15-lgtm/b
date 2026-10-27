@@ -36,6 +36,7 @@ import {
   ShieldCheck,
   KeyRound,
   Award,
+  Edit2,
 } from 'lucide-react';
 
 interface Props {
@@ -52,6 +53,7 @@ interface Props {
   onDeleteMember?: (memberId: string) => void;
   onOpenAddSavings?: (memberId: string) => void;
   onUpdateMember?: (updatedMember: Member) => void;
+  onEditPayment?: (payment: Payment, week?: Week) => void;
 }
 
 export const MemberProfileModal: React.FC<Props> = ({
@@ -68,6 +70,7 @@ export const MemberProfileModal: React.FC<Props> = ({
   onDeleteMember,
   onOpenAddSavings,
   onUpdateMember,
+  onEditPayment,
 }) => {
   const t = translations[lang];
   const isBangla = lang === 'bn';
@@ -653,6 +656,16 @@ export const MemberProfileModal: React.FC<Props> = ({
                         </div>
 
                         <StatusBadge status={pay.status} lang={lang} size="sm" />
+
+                        {isAdmin && onEditPayment && (
+                          <button
+                            onClick={() => onEditPayment(pay, week)}
+                            title={t.edit}
+                            className="p-1.5 rounded-lg bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-emerald-100 dark:hover:bg-emerald-950/70 hover:text-emerald-700 transition-colors"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
 
                         {pay.paidAmount > 0 && (
                           <button

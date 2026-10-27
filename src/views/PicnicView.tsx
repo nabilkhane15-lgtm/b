@@ -428,6 +428,21 @@ export const PicnicView: React.FC<Props> = ({
                                   {isBangla ? 'পূর্ণ পরিশোধ' : 'Mark Paid'}
                                 </button>
                               )}
+                              {isAdmin && pt.status !== 'UNPAID' && (
+                                <button
+                                  onClick={() =>
+                                    handleUpdatePayment(
+                                      selectedPicnic.id,
+                                      pt.id,
+                                      0
+                                    )
+                                  }
+                                  className="px-2 py-1 bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-800 hover:bg-rose-100 rounded-lg font-bold text-[10px]"
+                                  title="Mark Unpaid"
+                                >
+                                  {isBangla ? 'বকেয়া করুন' : 'Mark Unpaid'}
+                                </button>
+                              )}
                               {isAdmin && (
                                 <button
                                   onClick={() =>
