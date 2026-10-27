@@ -18,6 +18,7 @@ import {
   LeaderboardAward,
   AdminProfile,
 } from '../types';
+import { syncAdminPinToFirestore } from './firebase';
 
 const STORAGE_KEYS = {
   CLUB_SETTINGS: 'badminton_club_settings',
@@ -886,12 +887,32 @@ export function loadAdminPassword(): string {
   }
 }
 
-export function saveAdminPassword(newPassword: string): void {
+export function saveAdminPassword(newPassword: string, syncToCloud: boolean = true): void {
   try {
-    localStorage.setItem(STORAGE_KEYS.ADMIN_PASSWORD, newPassword);
+    const trimmed = newPassword.trim();
+    localStorage.setItem(STORAGE_KEYS.ADMIN_PASSWORD, trimmed);
     notifySync('SAVE_ADMIN_PASSWORD');
+    if (syncToCloud) {
+      syncAdminPinToFirestore(trimmed).catch((err) => {
+        console.warn('Background sync admin pin failed:', err);
+      });
+    }
   } catch (e) {
     console.error('Failed to save admin password:', e);
+  }
+}
+
+export function saveAdminPinFromCloud(cloudPin: string): void {
+  try {
+    if (!cloudPin) return;
+    const trimmed = String(cloudPin).trim();
+    const current = localStorage.getItem(STORAGE_KEYS.ADMIN_PASSWORD);
+    if (current !== trimmed) {
+      localStorage.setItem(STORAGE_KEYS.ADMIN_PASSWORD, trimmed);
+      notifySync('SAVE_ADMIN_PASSWORD');
+    }
+  } catch (e) {
+    console.error('Failed to apply cloud admin pin:', e);
   }
 }
 

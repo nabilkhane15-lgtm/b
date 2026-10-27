@@ -1,7 +1,8 @@
 import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Member, SportType, MemberCategory, ClubSettings } from '../types';
 import { Language } from '../utils/language';
-import { loadAdminPassword } from '../utils/storage';
+import { loadAdminPassword, saveAdminPinFromCloud } from '../utils/storage';
+import { fetchAdminPinFromFirestore } from '../utils/firebase';
 import {
   X,
   UserPlus,
@@ -256,17 +257,34 @@ export const MemberAuthModal: React.FC<Props> = ({
     onClose();
   };
 
-  const handleAdminSubmit = (e: React.FormEvent) => {
+  const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAdminError('');
-    const savedPass = loadAdminPassword();
+    let savedPass = loadAdminPassword();
     const trimmedPass = adminPassword.trim();
 
     if (adminModeType === 'master') {
-      if (
+      let isMatch =
         trimmedPass === savedPass ||
-        (savedPass === '1234' && (trimmedPass === 'admin' || trimmedPass === '1234'))
-      ) {
+        (savedPass === '1234' && (trimmedPass === 'admin' || trimmedPass === '1234'));
+
+      // If local cache doesn't match, verify against Firestore live in case it was updated on another browser
+      if (!isMatch) {
+        try {
+          const cloudPin = await fetchAdminPinFromFirestore();
+          if (cloudPin) {
+            saveAdminPinFromCloud(cloudPin);
+            savedPass = cloudPin;
+            isMatch =
+              trimmedPass === savedPass ||
+              (savedPass === '1234' && (trimmedPass === 'admin' || trimmedPass === '1234'));
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (isMatch) {
         onAdminSuccess?.(undefined);
         onClose();
       } else {

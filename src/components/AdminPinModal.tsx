@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { translations, Language } from '../utils/language';
-import { loadAdminPassword } from '../utils/storage';
+import { loadAdminPassword, saveAdminPinFromCloud } from '../utils/storage';
+import { fetchAdminPinFromFirestore } from '../utils/firebase';
 import { Member } from '../types';
 import { Lock, X, ShieldCheck, KeyRound, Eye, EyeOff, UserCheck, Crown } from 'lucide-react';
 
@@ -36,17 +37,33 @@ export const AdminPinModal: React.FC<Props> = ({
     (m) => m.assignedDuty || (m.delegatedPermissions && m.delegatedPermissions.length > 0) || m.subAdminPin
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const savedPass = loadAdminPassword();
+    let savedPass = loadAdminPassword();
     const trimmedPin = pin.trim();
 
     if (loginMode === 'admin') {
-      // Allow saved password or legacy fallback
-      if (
+      let isMatch =
         trimmedPin === savedPass ||
-        (savedPass === '1234' && (trimmedPin === 'admin' || trimmedPin === '1234'))
-      ) {
+        (savedPass === '1234' && (trimmedPin === 'admin' || trimmedPin === '1234'));
+
+      // If local cache doesn't match, verify against Firestore live in case it was updated on another browser
+      if (!isMatch) {
+        try {
+          const cloudPin = await fetchAdminPinFromFirestore();
+          if (cloudPin) {
+            saveAdminPinFromCloud(cloudPin);
+            savedPass = cloudPin;
+            isMatch =
+              trimmedPin === savedPass ||
+              (savedPass === '1234' && (trimmedPin === 'admin' || trimmedPin === '1234'));
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      if (isMatch) {
         onSuccess(undefined); // Full master admin
       } else {
         setError(true);

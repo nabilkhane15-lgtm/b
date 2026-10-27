@@ -243,6 +243,8 @@ export async function testFirebaseConnection(customConfig?: FirebaseConfig): Pro
  */
 export async function uploadClubDataToFirestore(data: {
   clubSettings?: any;
+  adminProfile?: any;
+  adminPin?: string;
   seasons?: any[];
   members?: any[];
   weeks?: any[];
@@ -269,15 +271,24 @@ export async function uploadClubDataToFirestore(data: {
 
     // 1. Save general club metadata and state
     const clubDocRef = doc(db, 'clubs', clubId);
-    await setDoc(
-      clubDocRef,
-      {
-        settings: data.clubSettings || {},
-        updatedAt: Timestamp.now(),
-      },
-      { merge: true }
-    );
+    const clubPayload: any = {
+      settings: data.clubSettings || {},
+      updatedAt: Timestamp.now(),
+    };
+    if (data.adminPin) {
+      clubPayload.adminPin = data.adminPin;
+    }
+    if (data.adminProfile) {
+      clubPayload.adminProfile = data.adminProfile;
+    }
+    await setDoc(clubDocRef, clubPayload, { merge: true });
     totalItems++;
+
+    // 1b. If adminPin provided, also sync directly to dedicated security doc
+    if (data.adminPin) {
+      const secRef = doc(db, `clubs/${clubId}/security`, 'admin');
+      await setDoc(secRef, { pin: data.adminPin, updatedAt: Timestamp.now() }, { merge: true });
+    }
 
     // 2. Batch write members
     if (data.members && data.members.length > 0) {
@@ -334,7 +345,7 @@ export async function uploadClubDataToFirestore(data: {
       await batch.commit();
     }
 
-    // 7. Store entire snapshot for quick restore
+    // 7. Store entire snapshot for quick restore and live onSnapshot broadcast
     const fullSnapshotRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
     await setDoc(fullSnapshotRef, {
       ...data,
@@ -379,13 +390,89 @@ export async function downloadClubDataFromFirestore(): Promise<{
     const clubSnap = await getDoc(clubDocRef);
     if (clubSnap.exists()) {
       const clubData = clubSnap.data();
-      return { success: true, data: { clubSettings: clubData.settings } };
+      return {
+        success: true,
+        data: {
+          clubSettings: clubData.settings,
+          adminPin: clubData.adminPin,
+          adminProfile: clubData.adminProfile,
+        },
+      };
     }
 
     return { success: false, error: 'ক্লাউডে কোনো ডাটা পাওয়া যায়নি।' };
   } catch (err: any) {
     console.error('Failed to download club data from Firestore:', err);
     return { success: false, error: err?.message || 'ডাটা ডাউনলোড করতে ব্যর্থ হয়েছে।' };
+  }
+}
+
+/**
+ * Directly writes updated admin security PIN to Firestore
+ */
+export async function syncAdminPinToFirestore(pin: string): Promise<boolean> {
+  const db = getFirestoreDb();
+  if (!db) return false;
+  try {
+    const clubId = 'primary_club';
+    // 1. Update in primary club doc
+    await setDoc(
+      doc(db, 'clubs', clubId),
+      { adminPin: pin, updatedAt: Timestamp.now() },
+      { merge: true }
+    );
+    // 2. Update in snapshots/latest doc so onSnapshot fires for other clients
+    await setDoc(
+      doc(db, `clubs/${clubId}/snapshots`, 'latest'),
+      { adminPin: pin, updatedAt: Timestamp.now() },
+      { merge: true }
+    );
+    // 3. Update dedicated security doc
+    await setDoc(
+      doc(db, `clubs/${clubId}/security`, 'admin'),
+      { pin, updatedAt: Timestamp.now() },
+      { merge: true }
+    );
+    return true;
+  } catch (err) {
+    console.error('Failed to sync admin PIN to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Directly fetches the latest admin PIN from Firestore
+ */
+export async function fetchAdminPinFromFirestore(): Promise<string | null> {
+  const db = getFirestoreDb();
+  if (!db) return null;
+  try {
+    const clubId = 'primary_club';
+    // Check security doc first
+    const secRef = doc(db, `clubs/${clubId}/security`, 'admin');
+    const secSnap = await getDoc(secRef);
+    if (secSnap.exists() && secSnap.data()?.pin) {
+      return String(secSnap.data().pin);
+    }
+
+    // Check snapshots/latest
+    const snapRef = doc(db, `clubs/${clubId}/snapshots`, 'latest');
+    const snapDoc = await getDoc(snapRef);
+    if (snapDoc.exists() && snapDoc.data()?.adminPin) {
+      return String(snapDoc.data().adminPin);
+    }
+
+    // Check club doc
+    const clubRef = doc(db, 'clubs', clubId);
+    const clubDoc = await getDoc(clubRef);
+    if (clubDoc.exists() && clubDoc.data()?.adminPin) {
+      return String(clubDoc.data().adminPin);
+    }
+
+    return null;
+  } catch (err) {
+    console.warn('Failed to fetch admin PIN from Firestore:', err);
+    return null;
   }
 }
 

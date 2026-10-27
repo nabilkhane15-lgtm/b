@@ -55,6 +55,8 @@ import {
   saveLoggedInMemberId,
   resetToDefaultData,
   subscribeToStorageSync,
+  loadAdminPassword,
+  saveAdminPinFromCloud,
 } from './utils/storage';
 import { Language, translations } from './utils/language';
 import { AdminProfile } from './types';
@@ -62,6 +64,7 @@ import {
   subscribeToClubDataSnapshot,
   uploadClubDataToFirestore,
   downloadClubDataFromFirestore,
+  fetchAdminPinFromFirestore,
   isFirebaseSyncEnabled,
 } from './utils/firebase';
 
@@ -310,13 +313,25 @@ export const App: React.FC = () => {
       }
     );
 
-    // Initial check: if cloud has no snapshot and admin is active, seed the database
+    // Initial check: fetch admin PIN and download latest cloud snapshot
+    fetchAdminPinFromFirestore()
+      .then((pin) => {
+        if (pin) {
+          saveAdminPinFromCloud(pin);
+        }
+      })
+      .catch(() => {});
+
     downloadClubDataFromFirestore()
       .then((res) => {
-        if (!res.success || !res.data) {
-          if (isAdmin) {
-            uploadClubDataToFirestore(getAllClubData()).catch(() => {});
-          }
+        if (res.success && res.data) {
+          isRemoteUpdatingRef.current = true;
+          handleRestoreClubData(res.data, false);
+          setTimeout(() => {
+            isRemoteUpdatingRef.current = false;
+          }, 1200);
+        } else if (isAdmin) {
+          uploadClubDataToFirestore(getAllClubData()).catch(() => {});
         }
       })
       .catch(() => {});
@@ -326,7 +341,7 @@ export const App: React.FC = () => {
     };
   }, []);
 
-  // Auto-sync updates from Admin to Firestore cloud (debounced 1.5s)
+  // Auto-sync updates to Firestore cloud (debounced 1.2s across all users/actions)
   const isInitialMount = useRef(true);
   useEffect(() => {
     if (isInitialMount.current) {
@@ -334,7 +349,7 @@ export const App: React.FC = () => {
       return;
     }
     if (isRemoteUpdatingRef.current) return;
-    if (!isAdmin || !isFirebaseSyncEnabled()) return;
+    if (!isFirebaseSyncEnabled()) return;
 
     const timer = setTimeout(async () => {
       try {
@@ -344,7 +359,7 @@ export const App: React.FC = () => {
       } catch (err) {
         console.warn('Auto cloud sync failed:', err);
       }
-    }, 1500);
+    }, 1200);
 
     return () => clearTimeout(timer);
   }, [
@@ -363,7 +378,7 @@ export const App: React.FC = () => {
     fundContributions,
     fundExpenses,
     leaderboardAwards,
-    isAdmin,
+    adminProfile,
   ]);
 
   const activeSeason: Season =
@@ -503,6 +518,11 @@ export const App: React.FC = () => {
     setPayments(updatedList);
     savePayments(updatedList);
     setPaymentEditTarget(null);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      payments: updatedList,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(lang === 'bn' ? 'পেমেন্ট সফলভাবে সংরক্ষিত হয়েছে' : 'Payment record updated');
   };
 
@@ -541,6 +561,11 @@ export const App: React.FC = () => {
     }
     setPayments(updatedList);
     savePayments(updatedList);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      payments: updatedList,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(lang === 'bn' ? 'পেমেন্ট সম্পূর্ণ হিসেবে চিহ্নিত' : 'Marked as Paid');
   };
 
@@ -588,6 +613,18 @@ export const App: React.FC = () => {
     setMonthlyPayments(newMonthlyPayments);
     saveMonthlyPayments(newMonthlyPayments);
 
+    // CRITICAL: Push new member to Firestore immediately so admin and all other devices see it instantly!
+    const fullPayload = {
+      ...getAllClubData(),
+      members: updatedMembers,
+      payments: newPayments,
+      monthlyPayments: newMonthlyPayments,
+      adminPin: loadAdminPassword(),
+    };
+    uploadClubDataToFirestore(fullPayload).catch((err) => {
+      console.warn('Instant member cloud push failed:', err);
+    });
+
     showToast(
       lang === 'bn'
         ? `${member.banglaName || member.name} যুক্ত হয়েছেন`
@@ -614,6 +651,15 @@ export const App: React.FC = () => {
     setSavingsDeposits(updatedSavings);
     saveSavingsDeposits(updatedSavings);
 
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      members: updatedMembers,
+      payments: updatedPayments,
+      monthlyPayments: updatedMonthlyPayments,
+      savingsDeposits: updatedSavings,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
+
     showToast(lang === 'bn' ? 'সদস্য অপসারিত হয়েছে' : 'Member removed');
   };
 
@@ -628,6 +674,11 @@ export const App: React.FC = () => {
     if (currentLoggedInMember && currentLoggedInMember.id === updatedMember.id) {
       setCurrentLoggedInMember(updatedMember);
     }
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      members: updated,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(lang === 'bn' ? 'সদস্যের তথ্য সফলভাবে হালনাগাদ হয়েছে' : 'Member profile updated');
   };
 
@@ -883,6 +934,11 @@ export const App: React.FC = () => {
     setMonthlyPayments(updatedList);
     saveMonthlyPayments(updatedList);
     setMonthlyPaymentTarget(null);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      monthlyPayments: updatedList,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(lang === 'bn' ? 'মাসিক চাঁদা সংরক্ষিত হয়েছে' : 'Monthly fee record updated');
   };
 
@@ -895,6 +951,11 @@ export const App: React.FC = () => {
     setSavingsDeposits(updated);
     saveSavingsDeposits(updated);
     setSavingsModalConfig(null);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      savingsDeposits: updated,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(
       lang === 'bn'
         ? deposit.type === 'DEPOSIT'
@@ -908,6 +969,11 @@ export const App: React.FC = () => {
     const updated = savingsDeposits.filter((s) => s.id !== savingsId);
     setSavingsDeposits(updated);
     saveSavingsDeposits(updated);
+    uploadClubDataToFirestore({
+      ...getAllClubData(),
+      savingsDeposits: updated,
+      adminPin: loadAdminPassword(),
+    }).catch(() => {});
     showToast(lang === 'bn' ? 'সঞ্চয় লেনদেন মুছে ফেলা হয়েছে' : 'Savings entry deleted');
   };
 
@@ -948,9 +1014,13 @@ export const App: React.FC = () => {
     fundExpenses,
     leaderboardAwards,
     adminProfile,
+    adminPin: loadAdminPassword(),
   });
 
   const handleRestoreClubData = (data: any, notifyToast: boolean = true) => {
+    if (data.adminPin) {
+      saveAdminPinFromCloud(data.adminPin);
+    }
     if (data.clubSettings) {
       setClubSettings(data.clubSettings);
       saveClubSettings(data.clubSettings);
@@ -962,6 +1032,12 @@ export const App: React.FC = () => {
     if (data.members) {
       setMembers(data.members);
       saveMembers(data.members);
+      if (currentLoggedInMember) {
+        const found = data.members.find((m: Member) => m.id === currentLoggedInMember.id);
+        if (found) {
+          setCurrentLoggedInMember(found);
+        }
+      }
     }
     if (data.seasons) {
       setSeasons(data.seasons);
