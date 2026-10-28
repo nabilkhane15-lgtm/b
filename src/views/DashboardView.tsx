@@ -111,8 +111,13 @@ export const DashboardView: React.FC<Props> = ({
   );
 
   // Custom Funds summary
-  const totalFundsCollected = fundContributions.reduce((acc, c) => acc + c.paidAmount, 0);
-  const totalFundsDisbursed = fundExpenses.reduce((acc, e) => acc + e.amount, 0);
+  const totalFundsCollected = fundContributions.reduce((acc, c) => acc + (c.paidAmount || 0), 0);
+  const totalFundsExpected = fundContributions.reduce((acc, c) => acc + (c.expectedAmount || 0), 0);
+  const totalFundsDue = fundContributions.reduce(
+    (acc, c) => acc + Math.max(0, (c.expectedAmount || 0) - (c.paidAmount || 0)),
+    0
+  );
+  const totalFundsDisbursed = fundExpenses.reduce((acc, e) => acc + (e.amount || 0), 0);
   const netFundsBalance = totalFundsCollected - totalFundsDisbursed;
 
   // Demographic statistics
@@ -121,25 +126,83 @@ export const DashboardView: React.FC<Props> = ({
   const youthCount = members.filter((m) => (m.memberCategory || 'youth') === 'youth').length;
   const patronsOnlyCount = members.filter((m) => m.participatesInSports === false).length;
 
+  const memberMap = new Map<string, Member>(members.map((m) => [m.id, m]));
+
+  // Helper: effective weekly expected amount for a payment (0 if member is Funding Patron / participatesInSports === false and hasn't paid)
+  const getEffectiveWeeklyExpected = (p: Payment): number => {
+    const mem = memberMap.get(p.memberId);
+    if (mem && mem.participatesInSports === false && (p.paidAmount || 0) === 0) {
+      return 0;
+    }
+    return p.expectedAmount || 0;
+  };
+
   // Current Week Payments
   const currentWeekPayments = activeWeek ? payments.filter((p) => p.weekId === activeWeek.id) : [];
-  const collectedThisWeek = currentWeekPayments.reduce((acc, p) => acc + p.paidAmount, 0);
+  const collectedThisWeek = currentWeekPayments.reduce((acc, p) => acc + (p.paidAmount || 0), 0);
+  const expectedThisWeekFromMembers = currentWeekPayments.reduce(
+    (acc, p) => acc + getEffectiveWeeklyExpected(p),
+    0
+  );
+  const weeklyMemberDueThisWeek = currentWeekPayments.reduce(
+    (acc, p) => acc + Math.max(0, getEffectiveWeeklyExpected(p) - (p.paidAmount || 0)),
+    0
+  );
   const weeklyTarget = activeWeek?.weeklyTarget || season?.weeklyTarget || 5000;
   const remainingThisWeek = Math.max(weeklyTarget - collectedThisWeek, 0);
 
-  // Season Overall Totals
-  const seasonTotalCollection = payments.reduce((acc, p) => acc + p.paidAmount, 0);
-  const seasonTotalExpected = payments.reduce((acc, p) => acc + p.expectedAmount, 0);
-  const totalOutstandingDue = Math.max(seasonTotalExpected - seasonTotalCollection, 0);
-  const totalExpenses = expenses.reduce((acc, e) => acc + e.amount, 0);
+  // Season Overall Totals (Weekly + Custom Funds combined so Fund money always reflects on Dashboard!)
+  const weeklyTotalCollection = payments.reduce((acc, p) => acc + (p.paidAmount || 0), 0);
+  const weeklyTotalDue = payments.reduce(
+    (acc, p) => acc + Math.max(0, getEffectiveWeeklyExpected(p) - (p.paidAmount || 0)),
+    0
+  );
 
-  // Explicit Formula requested: Current Balance = Total Collection - Total Expenses
+  const seasonTotalCollection = weeklyTotalCollection + totalFundsCollected;
+  const totalOutstandingDue = weeklyTotalDue + totalFundsDue;
+  const clubOnlyExpenses = expenses.reduce((acc, e) => acc + (e.amount || 0), 0);
+  const totalExpenses = clubOnlyExpenses + totalFundsDisbursed;
+
+  // Explicit Formula: Current Balance = Total Collection (Weekly + Funds) - Total Expenses (Club + Funds)
   const currentBalance = seasonTotalCollection - totalExpenses;
 
-  // Paid vs Unpaid members this week
+  // Build human-readable explanation of who owes what for the "মোট বকেয়া" card
+  const dueBreakdownLabels: string[] = [];
+  members.forEach((m) => {
+    const mName = isBangla && m.banglaName ? m.banglaName : m.name;
+    const mWeeklyDue = payments
+      .filter((p) => p.memberId === m.id)
+      .reduce((acc, p) => acc + Math.max(0, getEffectiveWeeklyExpected(p) - (p.paidAmount || 0)), 0);
+    const mFundDue = fundContributions
+      .filter((c) => c.memberId === m.id)
+      .reduce((acc, c) => acc + Math.max(0, (c.expectedAmount || 0) - (c.paidAmount || 0)), 0);
+    const mTotalDue = mWeeklyDue + mFundDue;
+    if (mTotalDue > 0) {
+      const typeLabel =
+        mWeeklyDue > 0 && mFundDue > 0
+          ? isBangla
+            ? 'সাপ্তাহিক+ফান্ড'
+            : 'Wk+Fund'
+          : mWeeklyDue > 0
+          ? isBangla
+            ? 'সাপ্তাহিক'
+            : 'Weekly'
+          : isBangla
+          ? 'ফান্ড'
+          : 'Fund';
+      dueBreakdownLabels.push(`${mName}: ${formatCurrency(mTotalDue, isBangla)} (${typeLabel})`);
+    }
+  });
+
+  // Paid vs Unpaid members this week (excluding non-playing patrons from unpaid count unless they have a fee)
   const paidCountThisWeek = currentWeekPayments.filter((p) => p.status === 'PAID').length;
   const partialCountThisWeek = currentWeekPayments.filter((p) => p.status === 'PARTIAL').length;
-  const unpaidCountThisWeek = currentWeekPayments.filter((p) => p.status === 'UNPAID').length;
+  const unpaidCountThisWeek = currentWeekPayments.filter(
+    (p) => p.status === 'UNPAID' && getEffectiveWeeklyExpected(p) > 0
+  ).length;
+  const paidFundMembersCount = new Set(
+    fundContributions.filter((c) => c.status === 'PAID').map((c) => c.memberId)
+  ).size;
 
   const currentSportMeta = SPORTS_MAP[clubSettings.sportType || 'multi'];
 
@@ -240,12 +303,19 @@ export const DashboardView: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 1. Weekly Target Visual Progress Bar */}
+      {/* 1. Auto-Scrolling Banner Carousel: Active Custom Funds + Weekly Target */}
       <WeeklyProgressBar
         collected={collectedThisWeek}
         target={weeklyTarget}
         weekTitle={isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
         lang={lang}
+        paidMembersCount={paidCountThisWeek}
+        unpaidMembersCount={unpaidCountThisWeek}
+        weeklyMemberDue={weeklyMemberDueThisWeek}
+        funds={funds}
+        fundContributions={fundContributions}
+        fundExpenses={fundExpenses}
+        onNavigate={onNavigate}
       />
 
       {/* 2. Main Financial Dashboard Cards Grid */}
@@ -268,33 +338,47 @@ export const DashboardView: React.FC<Props> = ({
               {formatNumber(members.length, isBangla)}
             </span>
             <span className="text-[11px] text-emerald-600 dark:text-emerald-400 block mt-0.5 font-medium">
-              {formatNumber(paidCountThisWeek, isBangla)} {isBangla ? 'জন পরিশোধিত' : 'paid this week'}
+              {paidCountThisWeek > 0
+                ? `${formatNumber(paidCountThisWeek, isBangla)} ${isBangla ? 'জন এ সপ্তাহে পরিশোধিত' : 'paid this week'}`
+                : paidFundMembersCount > 0
+                ? `${formatNumber(paidFundMembersCount, isBangla)} ${isBangla ? 'জন ফান্ডে পরিশোধিত' : 'paid in fund'}`
+                : `${formatNumber(paidCountThisWeek, isBangla)} ${isBangla ? 'জন পরিশোধিত' : 'paid'}`}
             </span>
           </div>
         </div>
 
-        {/* Weekly Collection Target */}
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
+        {/* Custom Funds Collection Card (Highlighted so Fund money is front & center on Dashboard!) */}
+        <div
+          onClick={() => onNavigate('funds')}
+          className="cursor-pointer group rounded-2xl bg-purple-50/70 dark:bg-purple-950/35 p-4 shadow-sm hover:shadow-md transition-all border border-purple-400/40 dark:border-purple-800 flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {t.weekly_target}
+            <span className="text-xs font-bold text-purple-900 dark:text-purple-200">
+              {isBangla ? 'বিশেষ ফান্ডে মোট জমা' : 'Special Funds Raised'}
             </span>
-            <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400">
-              <Target className="w-4 h-4" />
+            <div className="p-2 rounded-xl bg-purple-600 text-white shadow-sm">
+              <Coins className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-3">
-            <span className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white font-mono">
-              {formatCurrency(weeklyTarget, isBangla)}
+            <span className="text-2xl sm:text-3xl font-black text-purple-700 dark:text-purple-300 font-mono">
+              {formatCurrency(totalFundsCollected, isBangla)}
             </span>
-            <span className="text-[11px] text-slate-400 block mt-0.5">
-              {isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
+            <span className="text-[11px] text-purple-600 dark:text-purple-400 block mt-0.5 font-bold truncate">
+              {funds.length > 0
+                ? `${funds[0].icon || '🤝'} ${isBangla && funds[0].titleBangla ? funds[0].titleBangla : funds[0].title}`
+                : isBangla
+                ? 'ফান্ড ড্যাশবোর্ড দেখুন'
+                : 'View Funds'}
             </span>
           </div>
         </div>
 
         {/* Amount Collected This Week */}
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
+        <div
+          onClick={() => onNavigate('weekly')}
+          className="cursor-pointer rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {t.collected_this_week}
@@ -308,7 +392,7 @@ export const DashboardView: React.FC<Props> = ({
               {formatCurrency(collectedThisWeek, isBangla)}
             </span>
             <span className="text-[11px] text-slate-400 block mt-0.5">
-              {isBangla ? 'লক্ষ্যের' : 'Of Target'} {weeklyTarget > 0 ? Math.round((collectedThisWeek / weeklyTarget) * 100) : 0}%
+              {isBangla ? 'সাপ্তাহিক লক্ষ্য:' : 'Weekly Target:'} {formatCurrency(weeklyTarget, isBangla)}
             </span>
           </div>
         </div>
@@ -337,11 +421,11 @@ export const DashboardView: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Amount Remaining This Week */}
+        {/* Amount Remaining This Week (Member Weekly Dues vs Target) */}
         <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
-              {t.amount_remaining}
+              {isBangla ? 'এ সপ্তাহে সদস্য বকেয়া' : 'Weekly Member Due'}
             </span>
             <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400">
               <Clock className="w-4 h-4" />
@@ -349,16 +433,23 @@ export const DashboardView: React.FC<Props> = ({
           </div>
           <div className="mt-3">
             <span className="text-2xl sm:text-3xl font-black text-amber-600 dark:text-amber-400 font-mono">
-              {formatCurrency(remainingThisWeek, isBangla)}
+              {formatCurrency(weeklyMemberDueThisWeek, isBangla)}
             </span>
-            <span className="text-[11px] text-rose-500 block mt-0.5 font-medium">
-              {formatNumber(unpaidCountThisWeek, isBangla)} {isBangla ? 'জন বকেয়া' : 'unpaid'}
+            <span className="text-[11px] text-slate-500 dark:text-slate-400 block mt-0.5 font-medium">
+              {unpaidCountThisWeek > 0
+                ? `${formatNumber(unpaidCountThisWeek, isBangla)} ${isBangla ? 'জন খেলোয়াড়ের সাপ্তাহিক ফি বাকি' : 'playing members unpaid'}`
+                : isBangla
+                ? 'সাপ্তাহিক কোনো বকেয়া নেই'
+                : 'No weekly member dues'}
             </span>
           </div>
         </div>
 
-        {/* Total Outstanding Due */}
-        <div className="rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
+        {/* Total Outstanding Due (With Explicit Breakdown of What/Who is Due!) */}
+        <div
+          onClick={() => onNavigate('members')}
+          className="cursor-pointer rounded-2xl bg-white dark:bg-slate-900 p-4 shadow-sm hover:shadow-md transition-all border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between"
+        >
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               {t.total_due}
@@ -371,9 +462,16 @@ export const DashboardView: React.FC<Props> = ({
             <span className="text-2xl sm:text-3xl font-black text-rose-600 dark:text-rose-400 font-mono">
               {formatCurrency(totalOutstandingDue, isBangla)}
             </span>
-            <span className="text-[11px] text-slate-400 block mt-0.5">
-              {isBangla ? 'পুরো সিজনের সর্বমোট' : 'Full season dues'}
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 block mt-0.5 font-semibold">
+              {isBangla
+                ? `সাপ্তাহিক: ${formatCurrency(weeklyTotalDue, true)} • ফান্ড: ${formatCurrency(totalFundsDue, true)}`
+                : `Weekly: ${formatCurrency(weeklyTotalDue, false)} • Fund: ${formatCurrency(totalFundsDue, false)}`}
             </span>
+            {dueBreakdownLabels.length > 0 && (
+              <span className="text-[10px] text-rose-600 dark:text-rose-400 font-bold block mt-0.5 truncate">
+                👉 {dueBreakdownLabels.join(', ')}
+              </span>
+            )}
           </div>
         </div>
 
@@ -395,20 +493,22 @@ export const DashboardView: React.FC<Props> = ({
               {formatCurrency(totalExpenses, isBangla)}
             </span>
             <span className="text-[11px] text-orange-600 dark:text-orange-400 block mt-0.5 font-medium">
-              {formatNumber(expenses.length, isBangla)} {isBangla ? 'টি খরচ ভাউচার' : 'recorded items'}
+              {formatNumber(expenses.length + fundExpenses.length, isBangla)} {isBangla ? 'টি খরচ ভাউচার' : 'recorded items'}
             </span>
           </div>
         </div>
 
-        {/* Current Balance (HIGHLIGHTED) */}
+        {/* Current Balance (HIGHLIGHTED - Includes Weekly + Custom Funds!) */}
         <div className="col-span-2 rounded-2xl bg-gradient-to-br from-emerald-600 via-emerald-700 to-teal-800 p-5 text-white shadow-lg shadow-emerald-700/20 flex flex-col justify-between relative overflow-hidden">
           <div className="flex items-center justify-between">
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-emerald-200">
                 {t.current_balance}
               </span>
-              <span className="text-[10px] text-emerald-100/80 block mt-0.5">
-                {t.calc_formula}
+              <span className="text-[10px] text-emerald-100/90 block mt-0.5">
+                {isBangla
+                  ? `সাপ্তাহিক (${formatCurrency(weeklyTotalCollection, true)}) + বিশেষ ফান্ড (${formatCurrency(totalFundsCollected, true)}) − মোট খরচ (${formatCurrency(totalExpenses, true)})`
+                  : `Weekly (${formatCurrency(weeklyTotalCollection, false)}) + Funds (${formatCurrency(totalFundsCollected, false)}) - Expenses`}
               </span>
             </div>
             <div className="p-2.5 rounded-xl bg-white/20 text-white backdrop-blur-sm">
@@ -441,6 +541,11 @@ export const DashboardView: React.FC<Props> = ({
               </span>
               <span className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white font-mono">
                 {formatCurrency(seasonTotalCollection, isBangla)}
+              </span>
+              <span className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold block">
+                {isBangla
+                  ? `সাপ্তাহিক আদায়: ${formatCurrency(weeklyTotalCollection, true)} • বিশেষ ফান্ড আদায়: ${formatCurrency(totalFundsCollected, true)}`
+                  : `Weekly: ${formatCurrency(weeklyTotalCollection, false)} • Special Funds: ${formatCurrency(totalFundsCollected, false)}`}
               </span>
             </div>
           </div>
@@ -739,13 +844,13 @@ export const DashboardView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* 4. Current Week Collection Status List */}
+      {/* 4. Current Week & Custom Fund Collection Status List */}
       <div className="rounded-2xl bg-white dark:bg-slate-900 p-5 shadow-sm border border-slate-200/80 dark:border-slate-800">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+            <h3 className="text-base font-extrabold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
               <span>
-                {isBangla ? 'চলতি সপ্তাহের চাঁদা তালিকা' : 'This Week Payment Status'}
+                {isBangla ? 'চলতি সপ্তাহের চাঁদা ও ফান্ড তালিকা' : 'Weekly & Fund Payment Status'}
               </span>
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
                 {isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
@@ -753,7 +858,7 @@ export const DashboardView: React.FC<Props> = ({
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {isBangla
-                ? 'সদস্যের প্রোফাইল দেখতে নামের উপর ক্লিক করুন'
+                ? 'সদস্যের প্রোফাইল ও সম্পূর্ণ হিসাব দেখতে নামের উপর ক্লিক করুন'
                 : 'Click any member to open profile and payment history'}
             </p>
           </div>
@@ -769,43 +874,79 @@ export const DashboardView: React.FC<Props> = ({
 
         <div className="divide-y divide-slate-100 dark:divide-slate-800">
           {members.slice(0, 7).map((member) => {
+            const isPatronOnly = member.participatesInSports === false;
             const pay = currentWeekPayments.find((p) => p.memberId === member.id);
             const status = pay ? pay.status : 'UNPAID';
             const paid = pay ? pay.paidAmount : 0;
-            const expected = pay ? pay.expectedAmount : member.weeklyAmount;
+            const expected = isPatronOnly && paid === 0 ? 0 : pay ? pay.expectedAmount : member.weeklyAmount;
             const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
+
+            // Member's total custom fund contributions
+            const memberFundContribs = fundContributions.filter((fc) => fc.memberId === member.id);
+            const memberFundPaid = memberFundContribs.reduce((sum, fc) => sum + (fc.paidAmount || 0), 0);
 
             return (
               <div
                 key={member.id}
                 onClick={() => onSelectMember(member)}
-                className="py-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-xl transition-colors cursor-pointer"
+                className="py-3 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800/50 px-2 rounded-xl transition-colors cursor-pointer gap-2"
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-bold text-xs text-slate-700 dark:text-slate-300">
-                    {memberName.charAt(0)}
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden flex items-center justify-center font-bold text-xs text-slate-700 dark:text-slate-300 flex-shrink-0">
+                    {member.avatar ? (
+                      <img src={member.avatar} alt={memberName} className="w-full h-full object-cover" />
+                    ) : (
+                      memberName.charAt(0)
+                    )}
                   </div>
-                  <div>
-                    <span className="font-bold text-sm text-slate-900 dark:text-white block">
-                      {memberName}
-                    </span>
-                    <span className="text-[11px] text-slate-400">
-                      {member.role} • {member.phone}
-                    </span>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="font-bold text-sm text-slate-900 dark:text-white truncate">
+                        {memberName}
+                      </span>
+                      {member.memberCode && (
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                          #{member.memberCode}
+                        </span>
+                      )}
+                      {isPatronOnly && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300">
+                          {isBangla ? '🏛️ শুধু ফান্ডিং' : '🏛️ Patron'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      <span className="text-[11px] text-slate-400">
+                        {member.role} • {member.phone}
+                      </span>
+                      {memberFundPaid > 0 && (
+                        <span className="text-[10px] font-extrabold px-1.5 py-0.2 rounded-full bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300">
+                          🤝 {isBangla ? 'ফান্ড জমা:' : 'Fund:'} {formatCurrency(memberFundPaid, isBangla)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="text-right">
-                    <span className="text-sm font-extrabold font-mono text-slate-900 dark:text-white block">
-                      {formatCurrency(paid, isBangla)}
+                <div className="flex items-center gap-2.5 flex-shrink-0">
+                  {isPatronOnly && paid === 0 ? (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50">
+                      {isBangla ? 'সাপ্তাহিক চাঁদা প্রযোজ্য নয়' : 'No Weekly Fee'}
                     </span>
-                    <span className="text-[10px] text-slate-400">
-                      / {formatCurrency(expected, isBangla)}
-                    </span>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="text-right">
+                        <span className="text-sm font-extrabold font-mono text-slate-900 dark:text-white block">
+                          {formatCurrency(paid, isBangla)}
+                        </span>
+                        <span className="text-[10px] text-slate-400">
+                          / {formatCurrency(expected, isBangla)}
+                        </span>
+                      </div>
 
-                  <StatusBadge status={status} lang={lang} size="sm" />
+                      <StatusBadge status={status} lang={lang} size="sm" />
+                    </>
+                  )}
 
                   {pay && pay.paidAmount > 0 && (
                     <button

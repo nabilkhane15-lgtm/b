@@ -3,6 +3,7 @@ import { translations, Language } from '../utils/language';
 import { loadAdminPassword, saveAdminPinFromCloud } from '../utils/storage';
 import { fetchAdminPinFromFirestore } from '../utils/firebase';
 import { Member } from '../types';
+import { FunnyGirlMascot } from './FunnyGirlMascot';
 import { Lock, X, ShieldCheck, KeyRound, Eye, EyeOff, UserCheck, Crown } from 'lucide-react';
 
 interface Props {
@@ -24,6 +25,7 @@ export const AdminPinModal: React.FC<Props> = ({
   const isBangla = lang === 'bn';
   const [loginMode, setLoginMode] = useState<'admin' | 'subadmin'>('admin');
   const [pin, setPin] = useState('');
+  const [isPinFocused, setIsPinFocused] = useState(true);
   const [selectedMemberId, setSelectedMemberId] = useState<string>(() => {
     const withDuties = members.filter((m) => m.assignedDuty || (m.delegatedPermissions && m.delegatedPermissions.length > 0));
     return withDuties.length > 0 ? withDuties[0].id : (members[0]?.id || '');
@@ -94,10 +96,10 @@ export const AdminPinModal: React.FC<Props> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
-      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-800 animate-scale-up">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 rounded-3xl max-w-sm w-full p-5 sm:p-6 shadow-2xl border border-slate-200 dark:border-slate-800 animate-scale-up my-auto">
         {/* Header */}
-        <div className="flex justify-between items-center mb-3">
+        <div className="flex justify-between items-center mb-2">
           <div className="flex items-center gap-2.5">
             <div className="p-2.5 rounded-2xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400">
               <ShieldCheck className="w-5 h-5" />
@@ -124,6 +126,17 @@ export const AdminPinModal: React.FC<Props> = ({
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Interactive Funny Girl Mascot */}
+        <FunnyGirlMascot
+          isTypingPassword={isPinFocused || pin.length > 0}
+          isPasswordVisible={showPassword}
+          isTypingText={false}
+          textLength={pin.length}
+          hasError={error}
+          mode="admin"
+          isBangla={isBangla}
+        />
 
         {/* Mode Switcher Tabs */}
         <div className="grid grid-cols-2 gap-1 p-1 rounded-2xl bg-slate-100 dark:bg-slate-800 mb-3.5">

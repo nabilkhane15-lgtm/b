@@ -113,7 +113,12 @@ export const MemberSettingsView: React.FC<Props> = ({
   }, [member]);
 
   // Compute Personal Financial Summary
-  const myWeeklyPayments = payments.filter((p) => p.memberId === member.id);
+  const isPatronOnly = member.participatesInSports === false;
+  const myWeeklyPayments = payments
+    .filter((p) => p.memberId === member.id)
+    .map((p) =>
+      isPatronOnly && (p.paidAmount || 0) === 0 ? { ...p, expectedAmount: 0 } : p
+    );
   const totalWeeklyExpected = myWeeklyPayments.reduce((acc, p) => acc + (p.expectedAmount || 0), 0);
   const totalWeeklyPaid = myWeeklyPayments.reduce((acc, p) => acc + (p.paidAmount || 0), 0);
 

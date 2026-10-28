@@ -224,17 +224,22 @@ export const MembersView: React.FC<Props> = ({
             </div>
           ) : (
             filtered.map((member) => {
-              const pay = currentWeekPayments.find((p) => p.memberId === member.id) || {
+              const isPatronOnly = member.participatesInSports === false;
+              const rawPay = currentWeekPayments.find((p) => p.memberId === member.id) || {
                 id: `p-${activeWeek.id}-${member.id}`,
                 seasonId: activeWeek.seasonId,
                 weekId: activeWeek.id,
                 memberId: member.id,
-                expectedAmount: member.weeklyAmount,
+                expectedAmount: isPatronOnly ? 0 : member.weeklyAmount,
                 paidAmount: 0,
                 status: 'UNPAID' as const,
                 paymentDate: '',
                 paymentMethod: 'Cash',
               };
+              const pay =
+                isPatronOnly && rawPay.paidAmount === 0
+                  ? { ...rawPay, expectedAmount: 0 }
+                  : rawPay;
 
               const due = Math.max(pay.expectedAmount - pay.paidAmount, 0);
               const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
@@ -407,17 +412,22 @@ export const MembersView: React.FC<Props> = ({
                 </tr>
               ) : (
                 filtered.map((member) => {
-                  const pay = currentWeekPayments.find((p) => p.memberId === member.id) || {
+                  const isPatronOnly = member.participatesInSports === false;
+                  const rawPay = currentWeekPayments.find((p) => p.memberId === member.id) || {
                     id: `p-${activeWeek.id}-${member.id}`,
                     seasonId: activeWeek.seasonId,
                     weekId: activeWeek.id,
                     memberId: member.id,
-                    expectedAmount: member.weeklyAmount,
+                    expectedAmount: isPatronOnly ? 0 : member.weeklyAmount,
                     paidAmount: 0,
                     status: 'UNPAID' as const,
                     paymentDate: '',
                     paymentMethod: 'Cash',
                   };
+                  const pay =
+                    isPatronOnly && rawPay.paidAmount === 0
+                      ? { ...rawPay, expectedAmount: 0 }
+                      : rawPay;
 
                   const due = Math.max(pay.expectedAmount - pay.paidAmount, 0);
                   const memberName = isBangla && member.banglaName ? member.banglaName : member.name;

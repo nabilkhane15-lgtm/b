@@ -105,14 +105,21 @@ export const MemberProfileModal: React.FC<Props> = ({
   };
 
   // Filter all payments belonging to this member across all weeks
-  const memberPayments = payments.filter((p) => p.memberId === member.id);
+  const isPatronOnly = member.participatesInSports === false;
+  const memberPayments = payments
+    .filter((p) => p.memberId === member.id)
+    .map((p) =>
+      isPatronOnly && (p.paidAmount || 0) === 0 ? { ...p, expectedAmount: 0 } : p
+    );
 
   const totalPaid = memberPayments.reduce((acc, p) => acc + p.paidAmount, 0);
   const totalExpected = memberPayments.reduce((acc, p) => acc + p.expectedAmount, 0);
   const currentDue = Math.max(totalExpected - totalPaid, 0);
 
   const paidWeeksCount = memberPayments.filter((p) => p.status === 'PAID').length;
-  const missedWeeksCount = memberPayments.filter((p) => p.status === 'UNPAID').length;
+  const missedWeeksCount = memberPayments.filter(
+    (p) => p.status === 'UNPAID' && p.expectedAmount > 0
+  ).length;
 
   // Member's savings deposits
   const memberSavings = savingsDeposits.filter((d) => d.memberId === member.id);

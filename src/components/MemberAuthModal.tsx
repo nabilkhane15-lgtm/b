@@ -25,6 +25,7 @@ import {
   Droplet,
 } from 'lucide-react';
 import { processImageFile } from '../utils/imageUtils';
+import { FunnyGirlMascot, MascotMood } from './FunnyGirlMascot';
 
 export type AuthModalTab = 'login' | 'signup' | 'admin';
 
@@ -112,9 +113,83 @@ export const MemberAuthModal: React.FC<Props> = ({
   const [adminError, setAdminError] = useState('');
   const [showAdminPass, setShowAdminPass] = useState(false);
 
+  // Interactive Funny Girl Mascot Focus State
+  const [focusedField, setFocusedField] = useState<
+    'none' | 'identifier' | 'name' | 'banglaName' | 'phone' | 'address' | 'pin'
+  >('none');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!isOpen) return null;
+
+  // Compute current mascot mood & eye tracking progress
+  const hasError =
+    (activeTab === 'login' && !!loginError) ||
+    (activeTab === 'signup' && !!signUpError) ||
+    (activeTab === 'admin' && !!adminError);
+
+  const isPasswordVisible =
+    (activeTab === 'login' && showLoginPin) ||
+    (activeTab === 'signup' && showPin) ||
+    (activeTab === 'admin' && showAdminPass);
+
+  let mascotMood: MascotMood = 'idle';
+  if (hasError) {
+    mascotMood = 'error';
+  } else if (focusedField === 'pin') {
+    mascotMood = isPasswordVisible ? 'peeking' : 'hiding';
+  } else if (
+    isPasswordVisible &&
+    ((activeTab === 'login' && loginPin.length > 0) ||
+      (activeTab === 'signup' && pin.length > 0) ||
+      (activeTab === 'admin' && adminPassword.length > 0))
+  ) {
+    mascotMood = 'peeking';
+  } else if (focusedField !== 'none') {
+    mascotMood = 'watching';
+  } else if (activeTab === 'signup' && avatar) {
+    mascotMood = 'excited';
+  }
+
+  const activeTextLength =
+    focusedField === 'identifier'
+      ? loginIdentifier.length
+      : focusedField === 'name'
+      ? name.length
+      : focusedField === 'banglaName'
+      ? banglaName.length
+      : focusedField === 'phone'
+      ? phone.length
+      : focusedField === 'address'
+      ? address.length
+      : 6;
+
+  const lookProgress = Math.min(1, activeTextLength / 14);
+
+  const getCustomMascotMessage = (): string | undefined => {
+    if (hasError || focusedField === 'pin' || mascotMood === 'peeking') return undefined;
+    if (focusedField === 'identifier') {
+      return isBangla
+        ? 'মোবাইল নম্বর বা ৪ সংখ্যার মেম্বার আইডি দিন, আমি মিলিয়ে দেখছি! 🧐📱'
+        : 'Type your phone number or 4-digit ID, I am checking! 🧐📱';
+    }
+    if (focusedField === 'name' || focusedField === 'banglaName') {
+      return isBangla
+        ? 'বাহ! কী সুন্দর নাম! এই নামে তো দারুণ চ্যাম্পিয়ন মানাবে! 😍🏸'
+        : 'Ooh! What a great name for a club champion! 😍🏸';
+    }
+    if (focusedField === 'phone') {
+      return isBangla
+        ? 'সঠিক ১১ সংখ্যার মোবাইল নম্বর দিন, ভুল যেন না হয় কিন্তু! 👀📞'
+        : 'Enter your 11-digit phone number carefully! 👀📞';
+    }
+    if (focusedField === 'address') {
+      return isBangla
+        ? 'আরে বাহ! আপনি এই এলাকায় থাকেন? দারুণ তো! 🏡✨'
+        : 'Oh nice! So that is your neighborhood! 🏡✨';
+    }
+    return undefined;
+  };
 
   const handleAvatarFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -532,11 +607,16 @@ export const MemberAuthModal: React.FC<Props> = ({
 
             {/* TAB 1: MEMBER LOGIN */}
             {activeTab === 'login' && (
-              <form onSubmit={handleLoginSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
-                <div className="text-center py-1">
-                  <div className="w-12 h-12 rounded-2xl bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center mx-auto text-2xl mb-2 shadow-sm">
-                    👤
-                  </div>
+              <form onSubmit={handleLoginSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3.5">
+                <FunnyGirlMascot
+                  mood={mascotMood}
+                  lookProgress={lookProgress}
+                  customMessage={getCustomMascotMessage()}
+                  lang={lang}
+                  activeTab="login"
+                />
+
+                <div className="text-center">
                   <h4 className="font-extrabold text-slate-900 dark:text-white text-base">
                     {isBangla ? 'সদস্য অ্যাকাউন্টে লগইন' : 'Member Account Login'}
                   </h4>
@@ -560,9 +640,14 @@ export const MemberAuthModal: React.FC<Props> = ({
                   <input
                     type="text"
                     value={loginIdentifier}
-                    onChange={(e) => setLoginIdentifier(e.target.value)}
+                    onFocus={() => setFocusedField('identifier')}
+                    onBlur={() => setFocusedField('none')}
+                    onChange={(e) => {
+                      setLoginIdentifier(e.target.value);
+                      if (loginError) setLoginError('');
+                    }}
                     placeholder={isBangla ? 'যেমন: 01712345678 অথবা 1001' : 'e.g. 01712345678 or 1001'}
-                    className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                    className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                     required
                   />
                 </div>
@@ -572,18 +657,26 @@ export const MemberAuthModal: React.FC<Props> = ({
                     <span>{isBangla ? 'গোপন ৪ সংখ্যার PIN *' : '4-Digit Secret PIN *'}</span>
                     <button
                       type="button"
-                      onClick={() => setShowLoginPin(!showLoginPin)}
-                      className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold"
+                      onClick={() => {
+                        setShowLoginPin(!showLoginPin);
+                        setFocusedField('pin');
+                      }}
+                      className="text-[11px] text-pink-600 dark:text-pink-400 font-extrabold flex items-center gap-1"
                     >
-                      {showLoginPin ? 'লুকান' : 'দেখুন'}
+                      <span>{showLoginPin ? '🙈 লুকান' : '🫣 দেখুন'}</span>
                     </button>
                   </label>
                   <input
                     type={showLoginPin ? 'text' : 'password'}
                     value={loginPin}
-                    onChange={(e) => setLoginPin(e.target.value)}
+                    onFocus={() => setFocusedField('pin')}
+                    onBlur={() => setFocusedField('none')}
+                    onChange={(e) => {
+                      setLoginPin(e.target.value);
+                      if (loginError) setLoginError('');
+                    }}
                     placeholder="যেমন: 1234"
-                    className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                    className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-pink-500 focus:outline-none"
                     required
                   />
                 </div>
@@ -624,9 +717,17 @@ export const MemberAuthModal: React.FC<Props> = ({
 
             {/* TAB 2: SIGN UP */}
             {activeTab === 'signup' && (
-              <form onSubmit={handleSignUpSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+              <form onSubmit={handleSignUpSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3.5">
+                <FunnyGirlMascot
+                  mood={mascotMood}
+                  lookProgress={lookProgress}
+                  customMessage={getCustomMascotMessage()}
+                  lang={lang}
+                  activeTab="signup"
+                />
+
                 {/* Auto-Generated Member ID Showcase */}
-                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/40 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between">
+                <div className="p-3 rounded-2xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-950/40 dark:to-teal-950/40 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-between">
                   <div>
                     <span className="text-[10px] font-bold tracking-wider uppercase text-emerald-800 dark:text-emerald-300 block">
                       {isBangla ? 'আপনার জন্য নির্ধারিত মেম্বার আইডি' : 'Assigned Member ID'}
@@ -700,9 +801,14 @@ export const MemberAuthModal: React.FC<Props> = ({
                     <input
                       type="text"
                       value={name}
-                      onChange={(e) => setName(e.target.value)}
+                      onFocus={() => setFocusedField('name')}
+                      onBlur={() => setFocusedField('none')}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        if (signUpError) setSignUpError('');
+                      }}
                       placeholder="e.g. Rafiqul Islam"
-                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                       required
                     />
                   </div>
@@ -713,9 +819,11 @@ export const MemberAuthModal: React.FC<Props> = ({
                     <input
                       type="text"
                       value={banglaName}
+                      onFocus={() => setFocusedField('banglaName')}
+                      onBlur={() => setFocusedField('none')}
                       onChange={(e) => setBanglaName(e.target.value)}
                       placeholder="যেমন: রফিকুল ইসলাম"
-                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -730,9 +838,14 @@ export const MemberAuthModal: React.FC<Props> = ({
                     <input
                       type="tel"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onFocus={() => setFocusedField('phone')}
+                      onBlur={() => setFocusedField('none')}
+                      onChange={(e) => {
+                        setPhone(e.target.value);
+                        if (signUpError) setSignUpError('');
+                      }}
                       placeholder="017XXXXXXXX"
-                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                       required
                     />
                   </div>
@@ -745,19 +858,27 @@ export const MemberAuthModal: React.FC<Props> = ({
                       </span>
                       <button
                         type="button"
-                        onClick={() => setShowPin(!showPin)}
-                        className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold"
+                        onClick={() => {
+                          setShowPin(!showPin);
+                          setFocusedField('pin');
+                        }}
+                        className="text-[11px] text-pink-600 dark:text-pink-400 font-extrabold"
                       >
-                        {showPin ? 'লুকান' : 'দেখুন'}
+                        {showPin ? '🙈 লুকান' : '🫣 দেখুন'}
                       </button>
                     </label>
                     <input
                       type={showPin ? 'text' : 'password'}
                       maxLength={8}
                       value={pin}
-                      onChange={(e) => setPin(e.target.value)}
+                      onFocus={() => setFocusedField('pin')}
+                      onBlur={() => setFocusedField('none')}
+                      onChange={(e) => {
+                        setPin(e.target.value);
+                        if (signUpError) setSignUpError('');
+                      }}
                       placeholder="যেমন: 1234"
-                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-pink-500 focus:outline-none"
                       required
                     />
                   </div>
@@ -867,9 +988,11 @@ export const MemberAuthModal: React.FC<Props> = ({
                     <input
                       type="text"
                       value={address}
+                      onFocus={() => setFocusedField('address')}
+                      onBlur={() => setFocusedField('none')}
                       onChange={(e) => setAddress(e.target.value)}
                       placeholder="যেমন: মিরপুর, ঢাকা"
-                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white"
+                      className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -899,11 +1022,16 @@ export const MemberAuthModal: React.FC<Props> = ({
 
             {/* TAB 3: ADMIN ACCESS */}
             {activeTab === 'admin' && (
-              <form onSubmit={handleAdminSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
-                <div className="text-center py-1">
-                  <div className="w-12 h-12 rounded-2xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center mx-auto text-2xl mb-2 shadow-sm">
-                    👑
-                  </div>
+              <form onSubmit={handleAdminSubmit} className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-3.5">
+                <FunnyGirlMascot
+                  mood={mascotMood}
+                  lookProgress={lookProgress}
+                  customMessage={getCustomMascotMessage()}
+                  lang={lang}
+                  activeTab="admin"
+                />
+
+                <div className="text-center">
                   <h4 className="font-extrabold text-slate-900 dark:text-white text-base">
                     {isBangla ? 'ক্লাব অ্যাডমিন ও দায়িত্বপ্রাপ্ত প্যানেল' : 'Club Administrator Access'}
                   </h4>
@@ -959,18 +1087,26 @@ export const MemberAuthModal: React.FC<Props> = ({
                       <span>{isBangla ? 'প্রধান অ্যাডমিন সিকিউরিটি পাসওয়ার্ড *' : 'Master Admin Password *'}</span>
                       <button
                         type="button"
-                        onClick={() => setShowAdminPass(!showAdminPass)}
-                        className="text-[10px] text-amber-600 dark:text-amber-400 font-bold"
+                        onClick={() => {
+                          setShowAdminPass(!showAdminPass);
+                          setFocusedField('pin');
+                        }}
+                        className="text-[11px] text-amber-600 dark:text-amber-400 font-extrabold"
                       >
-                        {showAdminPass ? 'লুকান' : 'দেখুন'}
+                        {showAdminPass ? '🙈 লুকান' : '🫣 দেখুন'}
                       </button>
                     </label>
                     <input
                       type={showAdminPass ? 'text' : 'password'}
                       value={adminPassword}
-                      onChange={(e) => setAdminPassword(e.target.value)}
+                      onFocus={() => setFocusedField('pin')}
+                      onBlur={() => setFocusedField('none')}
+                      onChange={(e) => {
+                        setAdminPassword(e.target.value);
+                        if (adminError) setAdminError('');
+                      }}
                       placeholder={isBangla ? 'পাসওয়ার্ড লিখুন' : 'Enter admin password'}
-                      className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                      className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
                       required
                     />
                   </div>
@@ -1016,18 +1152,26 @@ export const MemberAuthModal: React.FC<Props> = ({
                         <span>{isBangla ? 'সাব-অ্যাডমিন PIN *' : 'Sub-Admin PIN *'}</span>
                         <button
                           type="button"
-                          onClick={() => setShowAdminPass(!showAdminPass)}
-                          className="text-[10px] text-amber-600 dark:text-amber-400 font-bold"
+                          onClick={() => {
+                            setShowAdminPass(!showAdminPass);
+                            setFocusedField('pin');
+                          }}
+                          className="text-[11px] text-amber-600 dark:text-amber-400 font-extrabold"
                         >
-                          {showAdminPass ? 'লুকান' : 'দেখুন'}
+                          {showAdminPass ? '🙈 লুকান' : '🫣 দেখুন'}
                         </button>
                       </label>
                       <input
                         type={showAdminPass ? 'text' : 'password'}
                         value={adminPassword}
-                        onChange={(e) => setAdminPassword(e.target.value)}
+                        onFocus={() => setFocusedField('pin')}
+                        onBlur={() => setFocusedField('none')}
+                        onChange={(e) => {
+                          setAdminPassword(e.target.value);
+                          if (adminError) setAdminError('');
+                        }}
                         placeholder="যেমন: 1234"
-                        className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono"
+                        className="w-full px-3 py-2.5 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-amber-500 focus:outline-none"
                         required
                       />
                     </div>

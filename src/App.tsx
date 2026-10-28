@@ -788,16 +788,37 @@ export const App: React.FC = () => {
 
   // Update Member (Demographics, Category, Role, Sports participation)
   const handleUpdateMember = (updatedMember: Member) => {
-    const updated = members.map((m) => (m.id === updatedMember.id ? updatedMember : m));
+    const effectiveWeekly =
+      updatedMember.participatesInSports === false ? 0 : updatedMember.weeklyAmount;
+    const normalizedMember: Member = {
+      ...updatedMember,
+      weeklyAmount: effectiveWeekly,
+    };
+
+    const updated = members.map((m) => (m.id === normalizedMember.id ? normalizedMember : m));
     setMembers(updated);
     saveMembers(updated);
-    if (selectedMemberProfile && selectedMemberProfile.id === updatedMember.id) {
-      setSelectedMemberProfile(updatedMember);
+
+    // Sync any UNPAID weekly payment slots for this member so non-playing patrons don't show stale dues
+    const updatedPayments = payments.map((p) => {
+      if (p.memberId === normalizedMember.id && (p.paidAmount || 0) === 0) {
+        return {
+          ...p,
+          expectedAmount: effectiveWeekly,
+        };
+      }
+      return p;
+    });
+    setPayments(updatedPayments);
+    savePayments(updatedPayments);
+
+    if (selectedMemberProfile && selectedMemberProfile.id === normalizedMember.id) {
+      setSelectedMemberProfile(normalizedMember);
     }
-    if (currentLoggedInMember && currentLoggedInMember.id === updatedMember.id) {
-      setCurrentLoggedInMember(updatedMember);
+    if (currentLoggedInMember && currentLoggedInMember.id === normalizedMember.id) {
+      setCurrentLoggedInMember(normalizedMember);
     }
-    pushDataToCloud({ members: updated }).then((res) => {
+    pushDataToCloud({ members: updated, payments: updatedPayments }).then((res) => {
       if (res.success && (res as any).mergedData?.members) {
         setMembers((res as any).mergedData.members);
         saveMembers((res as any).mergedData.members);
@@ -1247,8 +1268,19 @@ export const App: React.FC = () => {
       saveMonths(data.months);
     }
     if (data.payments) {
-      setPayments(data.payments);
-      savePayments(data.payments);
+      const patronIds = new Set(
+        finalMembersList
+          .filter((m) => m.participatesInSports === false)
+          .map((m) => m.id)
+      );
+      const normalizedPayments = (data.payments as Payment[]).map((p) => {
+        if (patronIds.has(p.memberId) && (p.paidAmount || 0) === 0 && p.expectedAmount > 0) {
+          return { ...p, expectedAmount: 0 };
+        }
+        return p;
+      });
+      setPayments(normalizedPayments);
+      savePayments(normalizedPayments);
     }
     if (data.monthlyPayments) {
       setMonthlyPayments(data.monthlyPayments);
