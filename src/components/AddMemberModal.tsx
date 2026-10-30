@@ -1,44 +1,49 @@
 import React, { useState, useRef, useMemo } from 'react';
-import { Member, Role, SportType, ContributionType, MemberCategory } from '../types';
+import { Member, Role, SportType, ContributionType, MemberCategory, ClubSettings } from '../types';
 import { translations, Language } from '../utils/language';
-import { SPORTS_MAP } from '../utils/sports';
-import { X, UserPlus, CheckSquare, Square, Camera } from 'lucide-react';
-import { processImageFile, DEFAULT_AVATARS } from '../utils/imageUtils';
+import { X, UserPlus, Camera } from 'lucide-react';
+import { processImageFile } from '../utils/imageUtils';
+import { getCategoryDefaultWeeklyFee } from '../utils/accounting';
+import { allocateNextMemberCode, findMemberByPhone, hashSecretSync } from '../utils/security';
 
 interface Props {
   lang: Language;
   onSave: (member: Omit<Member, 'id'>) => void;
   onClose: () => void;
   existingMembers?: Member[];
+  clubSettings?: Partial<ClubSettings>;
 }
 
-export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existingMembers = [] }) => {
+export const AddMemberModal: React.FC<Props> = ({
+  lang,
+  onSave,
+  onClose,
+  existingMembers = [],
+  clubSettings,
+}) => {
   const t = translations[lang];
   const isBangla = lang === 'bn';
 
   // Compute next available 4-digit memberCode
-  const suggestedCode = useMemo(() => {
-    let maxNum = 1000;
-    existingMembers.forEach((m) => {
-      const num = parseInt(m.memberCode, 10);
-      if (!isNaN(num) && num > maxNum) maxNum = num;
-    });
-    return (maxNum + 1).toString();
-  }, [existingMembers]);
+  const suggestedCode = useMemo(() => allocateNextMemberCode(existingMembers), [existingMembers]);
 
   const [memberCode, setMemberCode] = useState(suggestedCode);
   const [avatar, setAvatar] = useState<string | undefined>(undefined);
   const [name, setName] = useState('');
   const [banglaName, setBanglaName] = useState('');
   const [phone, setPhone] = useState('+880');
-  const [weeklyAmount, setWeeklyAmount] = useState<number>(350);
+  const [email, setEmail] = useState('');
+  const [memberCategory, setMemberCategory] = useState<MemberCategory>('youth');
+  const [weeklyAmount, setWeeklyAmount] = useState<number>(() =>
+    getCategoryDefaultWeeklyFee('youth', clubSettings)
+  );
   const [monthlyAmount, setMonthlyAmount] = useState<number>(1400);
   const [role, setRole] = useState<Role>('Member');
   const [preferredSport, setPreferredSport] = useState<SportType>('badminton');
   const [contributionType, setContributionType] = useState<ContributionType>('weekly');
   const [joiningDate, setJoiningDate] = useState(new Date().toLocaleDateString('en-GB'));
-  const [memberCategory, setMemberCategory] = useState<MemberCategory>('youth');
   const [participatesInSports, setParticipatesInSports] = useState<boolean>(true);
+  const [pin, setPin] = useState('1234');
   const [idError, setIdError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -54,9 +59,15 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
     }
   };
 
+  const handleCategoryChange = (cat: MemberCategory) => {
+    setMemberCategory(cat);
+    const defaultForCat = getCategoryDefaultWeeklyFee(cat, clubSettings);
+    setWeeklyAmount(defaultForCat);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!name.trim() && !banglaName.trim()) return;
 
     // Validate 4-digit code
     const cleanCode = memberCode.trim();
@@ -65,26 +76,49 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
       return;
     }
 
-    // Check uniqueness
+    // Check uniqueness of memberCode
     const duplicate = existingMembers.find((m) => m.memberCode === cleanCode);
     if (duplicate) {
-      setIdError(isBangla ? `আইডি #${cleanCode} ইতিপূর্বে ${duplicate.banglaName || duplicate.name} এর জন্য নির্ধারিত আছে` : `ID #${cleanCode} is already assigned`);
+      setIdError(
+        isBangla
+          ? `আইডি #${cleanCode} ইতিপূর্বে ${duplicate.banglaName || duplicate.name} এর জন্য নির্ধারিত আছে`
+          : `ID #${cleanCode} is already assigned`
+      );
       return;
     }
+
+    // Check uniqueness of phone if a full phone number was entered
+    const duplicatePhone = findMemberByPhone(phone, existingMembers);
+    if (duplicatePhone) {
+      setIdError(
+        isBangla
+          ? `এই মোবাইল নম্বরটি ইতিপূর্বে ${duplicatePhone.banglaName || duplicatePhone.name} (#${duplicatePhone.memberCode}) ব্যবহার করছেন`
+          : `Phone number already belongs to #${duplicatePhone.memberCode}`
+      );
+      return;
+    }
+
+    const cleanPin = pin.trim() || '1234';
 
     onSave({
       memberCode: cleanCode,
       avatar,
-      name: name.trim(),
+      name: (name.trim() || banglaName.trim()),
       banglaName: banglaName.trim() || undefined,
       phone: phone.trim() || '+880',
-      weeklyAmount: participatesInSports ? Number(weeklyAmount) || 0 : 0,
-      monthlyAmount: participatesInSports && contributionType !== 'weekly' ? Number(monthlyAmount) || 0 : undefined,
+      email: email.trim() || undefined,
+      weeklyAmount: participatesInSports ? Math.max(0, Math.round(Number(weeklyAmount) || 0)) : 0,
+      monthlyAmount:
+        participatesInSports && contributionType !== 'weekly'
+          ? Math.max(0, Math.round(Number(monthlyAmount) || 0))
+          : undefined,
       role,
       preferredSport,
       contributionType,
       memberCategory,
       participatesInSports,
+      pin: cleanPin,
+      pinHash: hashSecretSync(cleanPin),
       joiningDate: joiningDate || new Date().toLocaleDateString('en-GB'),
       isActive: true,
     });
@@ -176,25 +210,34 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
               )}
             </div>
           </div>
-          {/* Member Age Category (বাচ্চা, কিশোর, যুবক) */}
+
+          {/* Member Age Category (বাচ্চা: ১০০, কিশোর: ২০০, যুবক: ৩৫০) */}
           <div>
             <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
               {t.member_category} *
             </label>
             <div className="grid grid-cols-3 gap-2">
               {[
-                { id: 'child' as const, label: isBangla ? '🧒 বাচ্চা' : '🧒 Child', desc: isBangla ? 'শিশু/জুনিয়র' : 'Junior' },
-                { id: 'teen' as const, label: isBangla ? '🧑‍🦱 কিশোর' : '🧑‍🦱 Teen', desc: isBangla ? 'কিশোর' : 'Adolescent' },
-                { id: 'youth' as const, label: isBangla ? '👨‍🦱 যুবক' : '👨‍🦱 Youth', desc: isBangla ? 'যুবক/সিনিয়র' : 'Senior' },
+                {
+                  id: 'child' as const,
+                  label: isBangla ? '🧒 বাচ্চা' : '🧒 Child',
+                  desc: `৳${getCategoryDefaultWeeklyFee('child', clubSettings)}/${isBangla ? 'সপ্তাহ' : 'wk'}`,
+                },
+                {
+                  id: 'teen' as const,
+                  label: isBangla ? '🧑‍🦱 কিশোর' : '🧑‍🦱 Teen',
+                  desc: `৳${getCategoryDefaultWeeklyFee('teen', clubSettings)}/${isBangla ? 'সপ্তাহ' : 'wk'}`,
+                },
+                {
+                  id: 'youth' as const,
+                  label: isBangla ? '👨‍🦱 যুবক' : '👨‍🦱 Youth',
+                  desc: `৳${getCategoryDefaultWeeklyFee('youth', clubSettings)}/${isBangla ? 'সপ্তাহ' : 'wk'}`,
+                },
               ].map((cat) => (
                 <button
                   type="button"
                   key={cat.id}
-                  onClick={() => {
-                    setMemberCategory(cat.id);
-                    if (cat.id === 'child' && weeklyAmount > 200) setWeeklyAmount(200);
-                    if (cat.id === 'teen' && weeklyAmount > 300) setWeeklyAmount(300);
-                  }}
+                  onClick={() => handleCategoryChange(cat.id)}
                   className={`p-2.5 rounded-xl border text-center transition-all ${
                     memberCategory === cat.id
                       ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 font-bold ring-2 ring-emerald-500/20 shadow-sm'
@@ -202,7 +245,9 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
                   }`}
                 >
                   <div className="text-xs font-black">{cat.label}</div>
-                  <div className="text-[10px] text-slate-400 mt-0.5">{cat.desc}</div>
+                  <div className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400 mt-0.5">
+                    {cat.desc}
+                  </div>
                 </button>
               ))}
             </div>
@@ -266,7 +311,10 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
                 type="text"
                 required
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  setPhone(e.target.value);
+                  setIdError('');
+                }}
                 placeholder="+88017..."
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               />
@@ -279,7 +327,7 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
               <input
                 type="number"
                 min="0"
-                step="50"
+                step="10"
                 disabled={!participatesInSports}
                 required={participatesInSports}
                 value={participatesInSports ? weeklyAmount : 0}
@@ -287,6 +335,19 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
                 className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-bold font-mono text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none disabled:opacity-50"
               />
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+              {isBangla ? 'ইমেইল ঠিকানা (অটো ইমেইল ও রসিদের জন্য)' : 'Email Address (For Auto Receipts & Reminders)'}
+            </label>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="member@gmail.com"
+              className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -339,7 +400,7 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-2">
             <div>
               <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
                 {t.role}
@@ -347,13 +408,27 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as Role)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               >
-                <option value="Member">Member (সদস্য)</option>
-                <option value="Captain">Captain (অধিনায়ক)</option>
-                <option value="Treasurer">Treasurer (কোষাধ্যক্ষ)</option>
-                <option value="Admin">Admin (ম্যানেজার)</option>
+                <option value="Member">Member</option>
+                <option value="Captain">Captain</option>
+                <option value="Treasurer">Treasurer</option>
+                <option value="Admin">Admin</option>
               </select>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                {isBangla ? 'লগইন পিন' : 'Login PIN'}
+              </label>
+              <input
+                type="text"
+                maxLength={8}
+                value={pin}
+                onChange={(e) => setPin(e.target.value.replace(/\s/g, ''))}
+                placeholder="1234"
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+              />
             </div>
 
             <div>
@@ -365,7 +440,7 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
                 value={joiningDate}
                 onChange={(e) => setJoiningDate(e.target.value)}
                 placeholder="DD/MM/YYYY"
-                className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-2.5 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"
               />
             </div>
           </div>
@@ -390,4 +465,3 @@ export const AddMemberModal: React.FC<Props> = ({ lang, onSave, onClose, existin
     </div>
   );
 };
-

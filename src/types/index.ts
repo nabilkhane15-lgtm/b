@@ -1,29 +1,83 @@
-export type Role = 'Admin' | 'Captain' | 'Treasurer' | 'Member';
+export type Role = 'Admin' | 'Treasurer' | 'Captain' | 'Member';
+export type PaymentMethod = 'bKash' | 'Nagad' | 'Cash' | 'Bank' | (string & {});
 export type PaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
 export type SportType = 'badminton' | 'cricket' | 'football' | 'multi';
 export type ContributionType = 'weekly' | 'monthly' | 'both';
 export type CollectionFrequency = 'weekly' | 'monthly' | 'both';
-export type MemberCategory = 'child' | 'teen' | 'youth'; // বাচ্চা | কিশোর | যুবক
+export type MemberCategory = 'child' | 'teen' | 'youth';
 
-export type ExpenseCategory =
-  | 'Court / Field Rent'
-  | 'Shuttlecock / Balls'
-  | 'Lighting / Electricity'
-  | 'Tournament'
-  | 'Equipment & Gear'
-  | 'Food / Refreshment'
-  | 'Umpire / Referee'
-  | 'Jersey / Bibs'
-  | 'Medical / First Aid'
-  | 'Court Rent'
-  | 'Shuttlecock'
-  | 'Equipment'
-  | 'Food / Drinks'
-  | 'Other';
+export type TabType =
+  | 'dashboard'
+  | 'members'
+  | 'leaderboard'
+  | 'weekly'
+  | 'funds'
+  | 'tournament'
+  | 'picnic'
+  | 'expenses'
+  | 'reports'
+  | 'season'
+  | 'email'
+  | 'settings';
+
+export type DelegatedPermission =
+  | 'manage_collection'
+  | 'manage_funds'
+  | 'manage_expenses'
+  | 'manage_tournaments'
+  | 'manage_picnic'
+  | 'manage_members'
+  | 'manage_stars';
+
+export type AdminPermission = DelegatedPermission;
+
+export interface AuditLogEntry {
+  id: string;
+  timestamp: string;
+  action: 'PAYMENT_RECORDED' | 'PAYMENT_CORRECTED' | 'MARKED_PAID' | 'MARKED_UNPAID' | 'FEE_CHANGED';
+  actorName: string;
+  actorRole: 'MASTER_ADMIN' | 'SUB_ADMIN' | 'MEMBER' | 'SYSTEM';
+  targetId: string;
+  previousPaidAmount?: number;
+  newPaidAmount?: number;
+  previousStatus?: PaymentStatus;
+  newStatus?: PaymentStatus;
+  reason?: string;
+  transactionRef?: string;
+}
+
+export interface Member {
+  id: string;
+  memberCode: string; // 4-digit ID e.g. '1001', '1002'
+  avatar?: string; // Base64 or image URL
+  name: string;
+  banglaName?: string;
+  phone: string;
+  email?: string;
+  bloodGroup?: string;
+  address?: string;
+  weeklyAmount: number;
+  monthlyAmount?: number;
+  role: Role;
+  preferredSport?: SportType;
+  contributionType?: ContributionType;
+  memberCategory?: MemberCategory; // 'child' (বাচ্চা) | 'teen' (কিশোর) | 'youth' (যুবক)
+  participatesInSports?: boolean; // true = plays & pays weekly fee, false = only contributes to funds
+  pin?: string;
+  pinHash?: string;
+  loginPin?: string;
+  subAdminPin?: string;
+  isSubAdmin?: boolean;
+  assignedDuty?: string;
+  delegatedPermissions?: DelegatedPermission[];
+  joiningDate: string;
+  isActive: boolean;
+}
 
 export interface Season {
   id: string;
   name: string;
+  banglaName?: string;
   startDate: string;
   endDate: string;
   isActive: boolean;
@@ -34,47 +88,400 @@ export interface Season {
   notes?: string;
 }
 
-export interface Member {
+export interface Week {
   id: string;
-  memberCode: string; // 4-digit unique ID e.g. '1001'
+  seasonId: string;
+  weekNumber: number;
+  title: string;
+  titleBangla?: string;
+  label?: string;
+  banglaLabel?: string;
+  startDate: string;
+  endDate: string;
+  weeklyTarget: number;
+  targetAmount?: number;
+  isClosed: boolean;
+  isUpcoming?: boolean;
+}
+
+export type WeekPeriod = Week;
+
+export interface MonthRecord {
+  id: string;
+  seasonId: string;
+  monthNumber: number;
+  year: number;
+  title: string;
+  titleBangla?: string;
+  name?: string;
+  banglaName?: string;
+  targetAmount: number;
+  isClosed: boolean;
+  isUpcoming?: boolean;
+}
+
+export type MonthlyPeriod = MonthRecord;
+
+export interface Payment {
+  id: string;
+  seasonId: string;
+  weekId: string;
+  memberId: string;
+  expectedAmount: number;
+  paidAmount: number;
+  status: PaymentStatus;
+  paymentDate: string;
+  paymentMethod: PaymentMethod;
+  method?: PaymentMethod;
+  paidDate?: string;
+  notes?: string;
+  transactionRef?: string;
+  recordedBy?: string;
+  updatedAt?: string;
+  correctionHistory?: AuditLogEntry[];
+}
+
+export interface MonthlyPayment {
+  id: string;
+  seasonId: string;
+  monthId: string;
+  memberId: string;
+  expectedAmount: number;
+  paidAmount: number;
+  status: PaymentStatus;
+  paymentDate: string;
+  paymentMethod: PaymentMethod;
+  method?: PaymentMethod;
+  paidDate?: string;
+  notes?: string;
+  transactionRef?: string;
+  recordedBy?: string;
+  updatedAt?: string;
+  correctionHistory?: AuditLogEntry[];
+}
+
+export interface SavingsDeposit {
+  id: string;
+  seasonId: string;
+  memberId: string;
+  date: string;
+  monthPeriod?: string;
+  amount: number;
+  type: 'DEPOSIT' | 'WITHDRAWAL';
+  paymentMethod: PaymentMethod;
+  method?: PaymentMethod;
+  purpose?: string;
+  notes?: string;
+  recordedBy?: string;
+  transactionRef?: string;
+}
+
+export type FundCategory =
+  | 'Emergency'
+  | 'Infrastructure'
+  | 'Religious'
+  | 'Welfare'
+  | 'Social'
+  | 'General';
+
+export interface CustomFund {
+  id: string;
+  seasonId?: string;
+  title: string;
+  titleBangla?: string;
+  name?: string;
+  banglaName?: string;
+  category: FundCategory;
+  icon: string;
+  description: string;
+  banglaDescription?: string;
+  targetAmount: number;
+  defaultTargetPerMember?: number;
+  defaultPerMember?: number;
+  status: 'ACTIVE' | 'CLOSED' | 'COMPLETED';
+  isActive?: boolean;
+  createdDate: string;
+  color?: string;
+}
+
+export interface FundContribution {
+  id: string;
+  fundId: string;
+  seasonId?: string;
+  memberId: string;
+  donorName?: string;
+  expectedAmount: number;
+  paidAmount: number;
+  status: PaymentStatus;
+  date: string;
+  paymentMethod: PaymentMethod;
+  method?: PaymentMethod;
+  paidDate?: string;
+  notes?: string;
+  transactionRef?: string;
+  recordedBy?: string;
+  updatedAt?: string;
+  correctionHistory?: AuditLogEntry[];
+}
+
+export interface FundExpense {
+  id: string;
+  fundId: string;
+  seasonId?: string;
+  date: string;
+  title: string;
+  banglaTitle?: string;
+  amount: number;
+  disbursedTo?: string;
+  beneficiary?: string;
+  notes?: string;
+}
+
+export type ExpenseCategory =
+  | 'Shuttlecock'
+  | 'Shuttlecock / Balls'
+  | 'Net'
+  | 'Court Rent'
+  | 'Court / Field Rent'
+  | 'Lighting'
+  | 'Lighting / Electricity'
+  | 'Equipment'
+  | 'Equipment & Gear'
+  | 'Court Repair'
+  | 'Refreshment'
+  | 'Food / Refreshment'
+  | 'Food / Drinks'
+  | 'Tournament'
+  | 'Cricket Gear'
+  | 'Football Gear'
+  | 'Jersey'
+  | 'Jersey / Bibs'
+  | 'Other';
+
+export interface Expense {
+  id: string;
+  seasonId: string;
+  date: string;
+  category: ExpenseCategory;
+  sport?: SportType;
+  description: string;
+  banglaDescription?: string;
+  amount: number;
+  addedBy: string;
+  paidByMemberId?: string;
+  payee?: string;
+  paymentMethod?: PaymentMethod;
+  reference?: string;
+  fundId?: string;
+  updatedAt?: string;
+}
+
+export interface TournamentTeam {
+  id: string;
+  name: string;
+  player1: string;
+  player2: string;
+  phone: string;
+  registrationFee: number;
+  isPaid: boolean;
+  feePaid?: boolean;
+  matchesWon?: number;
+  matchesLost?: number;
+  points?: number;
+}
+
+export interface TournamentMatch {
+  id: string;
+  round: string;
+  team1: string;
+  team2: string;
+  team1Id?: string;
+  team2Id?: string;
+  court: string;
+  time: string;
+  scoreTeam1?: number;
+  scoreTeam2?: number;
+  score1?: number;
+  score2?: number;
+  status: 'SCHEDULED' | 'LIVE' | 'COMPLETED';
+  isCompleted?: boolean;
+  winner?: string;
+  winnerId?: string;
+}
+
+export interface TournamentExpenseItem {
+  id: string;
+  title: string;
+  banglaTitle?: string;
+  amount: number;
+  date: string;
+  category?: 'Prize' | 'Venue' | 'Shuttlecock' | 'Refreshment' | 'Referee' | 'Other';
+  notes?: string;
+}
+
+export interface Tournament {
+  id: string;
+  seasonId?: string;
+  sport?: SportType;
+  title: string;
+  titleBangla?: string;
+  name?: string;
+  banglaName?: string;
+  startDate: string;
+  endDate: string;
+  date?: string;
+  venue: string;
+  entryFee: number;
+  prizePool: string;
+  status: 'UPCOMING' | 'REGISTRATION_OPEN' | 'ONGOING' | 'COMPLETED';
+  teams: TournamentTeam[];
+  matches: TournamentMatch[];
+  expenses?: TournamentExpenseItem[];
+  notes?: string;
+}
+
+export interface PicnicParticipant {
+  id: string;
+  memberId?: string;
   name: string;
   banglaName?: string;
   phone: string;
-  avatar?: string; // photo/image data URL
-  email?: string;
-  joiningDate: string;
-  weeklyAmount: number;
-  monthlyAmount?: number;
-  contributionType?: 'weekly' | 'monthly' | 'both';
-  preferredSport?: SportType;
-  memberCategory?: MemberCategory; // 'child' | 'teen' | 'youth'
-  participatesInSports?: boolean; // whether member participates in sports & pays weekly/monthly game dues
-  role: Role;
-  assignedDuty?: string;
-  delegatedPermissions?: DelegatedPermission[];
-  subAdminPin?: string; // 4-digit PIN for sub-admin login
-  pin?: string; // 4-digit personal PIN for member self-login
-  bloodGroup?: string; // e.g. 'A+', 'B+', 'O+', 'AB+'
-  address?: string; // Living address or area
-  isActive: boolean;
+  membersCount: number;
+  guestsCount?: number;
+  feePerPerson: number;
+  totalFee: number;
+  expectedAmount?: number;
+  paidAmount: number;
+  status: PaymentStatus;
+  busSeat?: string;
+  dishContribution?: string;
+  notes?: string;
+  method?: PaymentMethod;
+  paidDate?: string;
+  transactionRef?: string;
+  recordedBy?: string;
+  updatedAt?: string;
+  correctionHistory?: AuditLogEntry[];
 }
 
-export type DelegatedPermission =
-  | 'manage_stars' // সেরা তারকা ও রেকর্ড
-  | 'manage_members' // সদস্য ব্যবস্থাপনা
-  | 'manage_collection' // চাঁদা ও পেমেন্ট এন্ট্রি
-  | 'manage_expenses' // খরচ ও বিল ভাউচার
-  | 'manage_tournaments' // টুর্নামেন্ট
-  | 'manage_picnic' // পিকনিক
-  | 'manage_funds'; // কল্যাণ তহবিল
+export interface PicnicExpense {
+  id: string;
+  picnicId?: string;
+  title: string;
+  banglaTitle?: string;
+  category: 'Market' | 'Transport' | 'Venue' | 'Cooking' | 'Decoration' | 'Food' | 'Prizes' | 'Other';
+  amount: number;
+  date: string;
+  paidBy?: string;
+  notes?: string;
+}
+
+export interface PicnicEvent {
+  id: string;
+  seasonId?: string;
+  title: string;
+  titleBangla?: string;
+  banglaTitle?: string;
+  date: string;
+  destination: string;
+  location?: string;
+  banglaLocation?: string;
+  feePerPerson: number;
+  perPersonFee?: number;
+  guestFee?: number;
+  estimatedBudget: number;
+  busNumber?: string;
+  status: 'UPCOMING' | 'BOOKING_OPEN' | 'COMPLETED';
+  participants: PicnicParticipant[];
+  expenses?: PicnicExpense[];
+  menuItems?: string[];
+  activities?: string[];
+  notes?: string;
+}
+
+export interface SubAdmin {
+  id: string;
+  memberId?: string;
+  name: string;
+  banglaName?: string;
+  roleTitle: string;
+  pin: string;
+  pinHash?: string;
+  permissions: DelegatedPermission[];
+  isActive: boolean;
+  addedDate: string;
+}
+
+export interface StarPlayer {
+  id: string;
+  memberId?: string;
+  name: string;
+  banglaName?: string;
+  sport: SportType;
+  badgeTitle: string;
+  banglaBadgeTitle: string;
+  statsText: string;
+  banglaStatsText?: string;
+  avatarUrl?: string;
+  isFeatured: boolean;
+}
+
+export interface LeaderboardBestPlayer {
+  memberId?: string;
+  memberCode?: string;
+  name: string;
+  banglaName?: string;
+  avatar?: string;
+  sport: SportType;
+  matchesPlayed: number;
+  matchesWon: number;
+  bestScoreText: string;
+  awardBadge: string;
+}
+
+export interface LeaderboardBestTeam {
+  teamName: string;
+  logo?: string;
+  sport: SportType;
+  playerNames: string;
+  memberCodes?: string[];
+  matchesPlayed: number;
+  matchesWon: number;
+  bestScoreText: string;
+  achievementTitle: string;
+}
+
+export interface LeaderboardBestScore {
+  title: string;
+  score: string;
+  achievedBy: string;
+  memberCode?: string;
+  opponent: string;
+  date: string;
+  sport: SportType;
+  notes?: string;
+}
+
+export type AwardPeriod = 'today' | 'weekly' | 'monthly' | 'season';
+
+export interface LeaderboardAward {
+  id: string;
+  period: AwardPeriod;
+  periodLabel: string;
+  date: string;
+  bestPlayer: LeaderboardBestPlayer;
+  bestTeam: LeaderboardBestTeam;
+  bestScore: LeaderboardBestScore;
+  notes?: string;
+}
 
 export interface AdminProfile {
   name: string;
   banglaName?: string;
-  designation: string; // e.g. "অ্যাপ প্রতিষ্ঠাতা ও প্রধান অ্যাডমিন"
+  designation: string;
   bio: string;
   photoUrl?: string;
-  photos?: string[]; // Multiple photos / gallery images for admin
+  photos?: string[];
   phone?: string;
   email?: string;
   location?: string;
@@ -87,261 +494,88 @@ export interface AdminProfile {
   websiteUrl?: string;
 }
 
-export interface Week {
-  id: string;
-  seasonId: string;
-  weekNumber: number;
-  title: string;
-  titleBangla?: string;
-  startDate: string;
-  endDate: string;
-  weeklyTarget: number;
-  isClosed: boolean;
-}
-
-export interface MonthRecord {
-  id: string;
-  seasonId: string;
-  monthNumber: number;
-  year: number;
-  title: string;
-  titleBangla?: string;
-  targetAmount: number;
-  isClosed: boolean;
-}
-
-export interface Payment {
-  id: string;
-  seasonId: string;
-  weekId: string;
-  memberId: string;
-  expectedAmount: number;
-  paidAmount: number;
-  status: PaymentStatus;
-  paymentDate: string;
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | string;
-  notes?: string;
-}
-
-export interface MonthlyPayment {
-  id: string;
-  seasonId: string;
-  monthId: string;
-  memberId: string;
-  expectedAmount: number;
-  paidAmount: number;
-  status: PaymentStatus;
-  paymentDate: string;
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | string;
-  notes?: string;
-}
-
-export interface SavingsDeposit {
-  id: string;
-  seasonId: string;
-  memberId: string;
-  date: string;
-  monthPeriod: string;
-  amount: number;
-  type: 'DEPOSIT' | 'WITHDRAWAL';
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | string;
-  notes?: string;
-  recordedBy?: string;
-}
-
-export interface Expense {
-  id: string;
-  seasonId: string;
-  date: string;
-  category: ExpenseCategory;
-  description: string;
-  amount: number;
-  addedBy: string;
-  sport?: SportType;
-}
-
 export interface ClubSettings {
   clubName: string;
-  clubNameBangla: string;
+  clubNameBangla?: string;
+  clubBanglaName?: string;
   location: string;
+  courtLocation?: string;
   established: string;
   defaultWeeklyFee: number;
-  defaultMonthlyFee?: number;
-  defaultMonthlySavings?: number;
+  childWeeklyFee?: number;
+  teenWeeklyFee?: number;
+  youthWeeklyFee?: number;
+  defaultMonthlyFee: number;
+  defaultMonthlySavings: number;
+  defaultFundAmount?: number;
+  defaultPicnicFee?: number;
+  defaultTournamentFee?: number;
+  openingCashBalance?: number;
   sportType: SportType;
-  collectionFrequency: 'weekly' | 'monthly' | 'both';
+  collectionFrequency: CollectionFrequency;
   messengerLink?: string;
   logoUrl?: string;
+  logoImage?: string;
+  logoText?: string;
+  tagline?: string;
+  banglaTagline?: string;
+  adminName?: string;
+  adminRole?: string;
+  adminPhone?: string;
+  adminPin?: string;
+  adminPinHash?: string;
+  playingTime?: string;
+  emergencyPhone?: string;
+  subAdmins?: SubAdmin[];
+  starPlayers?: StarPlayer[];
 }
 
-export interface TournamentMatch {
-  id: string;
-  round: string;
-  team1: string;
-  team2: string;
-  court: string;
-  time: string;
-  scoreTeam1?: number;
-  scoreTeam2?: number;
-  status: 'SCHEDULED' | 'LIVE' | 'COMPLETED';
-  winner?: string;
+export type EmailTemplateType =
+  | 'DUE_REMINDER'
+  | 'PAID_RECEIPT'
+  | 'PARTIAL_REMINDER'
+  | 'FUND_NOTICE'
+  | 'CUSTOM';
+
+export interface EmailTemplateConfig {
+  subjectBn: string;
+  bodyBn: string;
+  subjectEn: string;
+  bodyEn: string;
 }
 
-export interface TournamentTeam {
-  id: string;
-  name: string;
-  player1: string;
-  player2?: string;
-  phone: string;
-  registrationFee: number;
-  isPaid: boolean;
+export interface EmailSettings {
+  autoSendOnPaid: boolean;
+  autoSendOnPartial?: boolean;
+  autoRemindUnpaid?: boolean;
+  autoOpenGmailOnPaid: boolean;
+  senderName: string;
+  senderBrandName?: string;
+  fromDomainEmail?: string;
+  replyToEmail: string;
+  paymentNumbersInfo: string;
+  provider: 'GMAIL_DIRECT' | 'EMAILJS' | 'WEBHOOK' | 'CUSTOM_DOMAIN';
+  emailJsServiceId?: string;
+  emailJsTemplateId?: string;
+  emailJsPublicKey?: string;
+  webhookUrl?: string;
+  brevoApiKey?: string;
+  customTemplates?: Partial<Record<EmailTemplateType, EmailTemplateConfig>>;
 }
 
-export interface Tournament {
+export interface EmailLogEntry {
   id: string;
-  sport?: SportType;
-  title: string;
-  titleBangla?: string;
-  startDate: string;
-  endDate: string;
-  venue: string;
-  entryFee: number;
-  prizePool: string;
-  status: 'UPCOMING' | 'REGISTRATION_OPEN' | 'ONGOING' | 'COMPLETED';
-  teams: TournamentTeam[];
-  matches: TournamentMatch[];
-  notes?: string;
-}
-
-export interface PicnicParticipant {
-  id: string;
-  name: string;
-  phone: string;
-  membersCount: number; // e.g. self + family
-  feePerPerson: number;
-  totalFee: number;
-  paidAmount: number;
-  status: PaymentStatus;
-  busSeat?: string;
-}
-
-export interface PicnicEvent {
-  id: string;
-  title: string;
-  titleBangla?: string;
-  date: string;
-  destination: string;
-  feePerPerson: number;
-  estimatedBudget: number;
-  status: 'PLANNING' | 'BOOKING_OPEN' | 'COMPLETED';
-  participants: PicnicParticipant[];
-  busNumber?: string;
-  notes?: string;
-}
-
-export type FundCategory =
-  | 'Welfare'
-  | 'Emergency'
-  | 'Infrastructure'
-  | 'Religious'
-  | 'Social'
-  | 'General'
-  | 'Other';
-
-export interface CustomFund {
-  id: string;
-  seasonId?: string;
-  title: string;
-  titleBangla?: string;
-  category: FundCategory;
-  description?: string;
-  targetAmount: number; // 0 if open-ended
-  defaultTargetPerMember?: number;
-  status: 'ACTIVE' | 'CLOSED';
-  createdDate: string;
-  icon?: string;
-}
-
-export interface FundContribution {
-  id: string;
-  fundId: string;
+  timestamp: string;
   memberId: string;
-  expectedAmount: number;
-  paidAmount: number;
-  status: PaymentStatus;
-  date: string;
-  paymentMethod: 'Cash' | 'bKash' | 'Nagad' | 'Bank' | string;
-  notes?: string;
+  memberName: string;
+  memberCode: string;
+  recipientEmail: string;
+  templateType: EmailTemplateType;
+  subject: string;
+  body: string;
+  deliveryMethod: 'API_AUTO' | 'GMAIL_WEB' | 'MAILTO_CLIENT' | 'AUTO_LOG';
+  status: 'SENT' | 'OPENED' | 'QUEUED' | 'FAILED';
+  periodTitle?: string;
+  amount?: number;
 }
 
-export interface FundExpense {
-  id: string;
-  fundId: string;
-  date: string;
-  title: string;
-  amount: number;
-  disbursedTo?: string;
-  notes?: string;
-}
-
-export type AwardPeriod = 'today' | 'weekly' | 'monthly' | 'season';
-
-export interface LeaderboardPlayer {
-  memberId: string;
-  memberCode: string; // 4-digit ID
-  name: string;
-  banglaName?: string;
-  avatar?: string; // uploaded photo
-  sport: SportType;
-  matchesPlayed: number;
-  matchesWon: number;
-  bestScoreText: string; // e.g. "21-12, 21-14" or "74* runs & 3 wkts" or "Hat-trick (3 goals)"
-  awardBadge: string; // e.g. "MVP", "Player of the Match", "Best Shuttler", "Top Scorer"
-}
-
-export interface LeaderboardTeam {
-  teamName: string;
-  logo?: string; // uploaded image
-  sport: SportType;
-  playerNames: string; // "Tanvir Ahmed & Rakib Hasan"
-  memberCodes?: string[]; // ["1001", "1002"]
-  matchesPlayed: number;
-  matchesWon: number;
-  bestScoreText: string; // e.g. "21-9, 21-11" or "185/2 (10 ov)"
-  achievementTitle?: string; // e.g. "Unbeaten Champions", "Best Doubles Duo"
-}
-
-export interface LeaderboardScoreRecord {
-  title: string; // e.g. "Match Highest Score", "Fastest 50", "Big Margin Win"
-  score: string; // e.g. "21-06 (Badminton)" or "215/3 (Cricket)" or "6-1 (Football)"
-  achievedBy: string; // player or team name
-  memberCode?: string; // 4-digit ID if individual
-  opponent?: string;
-  date: string;
-  sport: SportType;
-  notes?: string;
-}
-
-export interface LeaderboardAward {
-  id: string;
-  period: AwardPeriod; // 'today' | 'weekly' | 'monthly' | 'season'
-  periodLabel: string; // e.g. "Today's Champions (আজকের সেরা)", "Week 4 Champions", "February 2026"
-  date: string;
-  bestPlayer?: LeaderboardPlayer;
-  bestTeam?: LeaderboardTeam;
-  bestScore?: LeaderboardScoreRecord;
-  notes?: string;
-}
-
-export type TabType =
-  | 'dashboard'
-  | 'members'
-  | 'weekly'
-  | 'funds'
-  | 'leaderboard'
-  | 'tournament'
-  | 'picnic'
-  | 'expenses'
-  | 'reports'
-  | 'season'
-  | 'settings';

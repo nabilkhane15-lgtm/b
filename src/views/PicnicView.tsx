@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { PicnicEvent, PicnicParticipant } from '../types';
+import { PicnicEvent, PicnicParticipant, PicnicExpense } from '../types';
 import { translations, Language, formatCurrency, formatNumber } from '../utils/language';
+import { calculatePicnicMetrics } from '../utils/accounting';
 import {
   Palmtree,
   Plus,
@@ -16,6 +17,7 @@ import {
   CreditCard,
   DollarSign,
   Send,
+  Receipt,
 } from 'lucide-react';
 
 interface Props {
@@ -41,6 +43,7 @@ export const PicnicView: React.FC<Props> = ({
   );
   const [showAddModal, setShowAddModal] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [showExpenseModal, setShowExpenseModal] = useState(false);
 
   // New Picnic Event Form State
   const [title, setTitle] = useState('');
@@ -58,6 +61,12 @@ export const PicnicView: React.FC<Props> = ({
   const [membersCount, setMembersCount] = useState<number>(1);
   const [paidAmount, setPaidAmount] = useState<number>(1200);
   const [busSeat, setBusSeat] = useState('');
+
+  // New Picnic Expense Form State
+  const [expTitle, setExpTitle] = useState('');
+  const [expCategory, setExpCategory] = useState<'Transport' | 'Food' | 'Venue' | 'Prizes' | 'Other'>('Food');
+  const [expAmount, setExpAmount] = useState<number | ''>('');
+  const [expNotes, setExpNotes] = useState('');
 
   const selectedPicnic =
     picnics.find((p) => p.id === selectedPicnicId) || picnics[0];
@@ -77,6 +86,7 @@ export const PicnicView: React.FC<Props> = ({
       busNumber: busNumber.trim() || undefined,
       status: 'BOOKING_OPEN',
       participants: [],
+      expenses: [],
       notes: notes.trim() || undefined,
     };
 
@@ -164,17 +174,50 @@ export const PicnicView: React.FC<Props> = ({
     onUpdatePicnics(updated);
   };
 
-  const totalCollected = selectedPicnic
-    ? selectedPicnic.participants.reduce((sum, pt) => sum + pt.paidAmount, 0)
-    : 0;
+  const handleAddPicnicExpense = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedPicnic || !expTitle.trim() || expAmount === '' || Number(expAmount) <= 0) return;
 
-  const totalTarget = selectedPicnic
-    ? selectedPicnic.participants.reduce((sum, pt) => sum + pt.totalFee, 0)
-    : 0;
+    const newExpense: PicnicExpense = {
+      id: `pexp-${Date.now()}`,
+      picnicId: selectedPicnic.id,
+      title: expTitle.trim(),
+      category: expCategory,
+      amount: Math.round(Number(expAmount)),
+      date: new Date().toLocaleDateString('en-GB'),
+      notes: expNotes.trim() || undefined,
+    };
 
-  const totalPersons = selectedPicnic
-    ? selectedPicnic.participants.reduce((sum, pt) => sum + pt.membersCount, 0)
-    : 0;
+    const updated = picnics.map((p) =>
+      p.id === selectedPicnic.id
+        ? { ...p, expenses: [newExpense, ...(p.expenses || [])] }
+        : p
+    );
+
+    onUpdatePicnics(updated);
+    setShowExpenseModal(false);
+    setExpTitle('');
+    setExpAmount('');
+    setExpNotes('');
+  };
+
+  const handleDeletePicnicExpense = (picnicId: string, expenseId: string) => {
+    const updated = picnics.map((p) => {
+      if (p.id !== picnicId) return p;
+      return {
+        ...p,
+        expenses: (p.expenses || []).filter((ex) => ex.id !== expenseId),
+      };
+    });
+    onUpdatePicnics(updated);
+  };
+
+  const picnicMetrics = selectedPicnic ? calculatePicnicMetrics(selectedPicnic) : null;
+  const totalCollected = picnicMetrics?.collected ?? 0;
+  const totalTarget = picnicMetrics?.expected ?? 0;
+  const totalExpenses = picnicMetrics?.expensesTotal ?? 0;
+  const netResult = picnicMetrics?.netResult ?? 0;
+  const totalPersons = picnicMetrics?.totalPersons ?? 0;
 
   return (
     <div className="space-y-5 pb-24">
@@ -263,7 +306,7 @@ export const PicnicView: React.FC<Props> = ({
               </div>
 
               {/* Metrics */}
-              <div className="flex items-center gap-3 bg-white/10 backdrop-blur-md p-3.5 rounded-xl border border-white/20">
+              <div className="flex flex-wrap items-center gap-3 bg-white/10 backdrop-blur-md p-3.5 rounded-xl border border-white/20">
                 <div>
                   <span className="text-[10px] text-teal-200 block uppercase tracking-wider">
                     {isBangla ? 'মাথাপিছু ফি' : 'Per Person'}
@@ -288,6 +331,24 @@ export const PicnicView: React.FC<Props> = ({
                   </span>
                   <span className="text-base font-black text-emerald-200">
                     {formatCurrency(totalCollected, isBangla)}
+                  </span>
+                </div>
+                <div className="w-px h-8 bg-white/20" />
+                <div>
+                  <span className="text-[10px] text-teal-200 block uppercase tracking-wider">
+                    {isBangla ? 'মোট খরচ' : 'Expenses'}
+                  </span>
+                  <span className="text-base font-black text-rose-200">
+                    {formatCurrency(totalExpenses, isBangla)}
+                  </span>
+                </div>
+                <div className="w-px h-8 bg-white/20" />
+                <div>
+                  <span className="text-[10px] text-teal-200 block uppercase tracking-wider">
+                    {isBangla ? 'নিট ব্যালেন্স' : 'Net Result'}
+                  </span>
+                  <span className={`text-base font-black ${netResult >= 0 ? 'text-lime-300' : 'text-rose-300'}`}>
+                    {formatCurrency(netResult, isBangla)}
                   </span>
                 </div>
               </div>
@@ -371,7 +432,7 @@ export const PicnicView: React.FC<Props> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {selectedPicnic.participants.map((pt) => {
-                      const due = pt.totalFee - pt.paidAmount;
+                      const due = Math.max(pt.totalFee - pt.paidAmount, 0);
                       return (
                         <tr key={pt.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                           <td className="px-3 py-3 font-extrabold text-slate-900 dark:text-white">
@@ -467,6 +528,90 @@ export const PicnicView: React.FC<Props> = ({
               </div>
             )}
           </div>
+
+          {/* Picnic Expenses & Net Result Table */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h4 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  <Receipt className="w-4 h-4 text-rose-500" />
+                  <span>{isBangla ? 'পিকনিক খরচ ও নিট হিসাব (Net Result)' : 'Picnic Expenses & Net Result'}</span>
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-mono">
+                    {formatCurrency(totalExpenses, isBangla)}
+                  </span>
+                </h4>
+                <p className="text-xs text-slate-400">
+                  {isBangla
+                    ? `হিসাব সূত্র: নিট ব্যালেন্স (${formatCurrency(netResult, true)}) = আদায় (${formatCurrency(totalCollected, true)}) - খরচ (${formatCurrency(totalExpenses, true)})`
+                    : `Formula: Net Result (${formatCurrency(netResult, false)}) = Collected (${formatCurrency(totalCollected, false)}) - Expenses (${formatCurrency(totalExpenses, false)})`}
+                </p>
+              </div>
+
+              {isAdmin && (
+                <button
+                  onClick={() => setShowExpenseModal(true)}
+                  className="px-3 py-1.5 rounded-xl bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-300 hover:bg-rose-100 dark:hover:bg-rose-900 font-bold text-xs flex items-center gap-1 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{isBangla ? 'পিকনিক খরচ যোগ করুন' : 'Add Expense'}</span>
+                </button>
+              )}
+            </div>
+
+            {(!selectedPicnic.expenses || selectedPicnic.expenses.length === 0) ? (
+              <div className="text-center py-6 text-slate-400 text-xs">
+                {isBangla
+                  ? 'এখনও কোনো পিকনিক খরচ যোগ করা হয়নি।'
+                  : 'No picnic expenses recorded yet.'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="text-[11px] uppercase bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-extrabold rounded-lg">
+                    <tr>
+                      <th className="px-3 py-2.5 rounded-l-lg">{isBangla ? 'খরচের বিবরণ' : 'Title'}</th>
+                      <th className="px-3 py-2.5">{isBangla ? 'খাত' : 'Category'}</th>
+                      <th className="px-3 py-2.5">{isBangla ? 'তারিখ' : 'Date'}</th>
+                      <th className="px-3 py-2.5">{isBangla ? 'পরিমাণ' : 'Amount'}</th>
+                      <th className="px-3 py-2.5 text-right rounded-r-lg">{isBangla ? 'অ্যাকশন' : 'Action'}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {selectedPicnic.expenses.map((ex) => (
+                      <tr key={ex.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <td className="px-3 py-2.5 font-bold text-slate-900 dark:text-white">
+                          {ex.title}
+                          {ex.notes && (
+                            <span className="block text-[10px] text-slate-400 font-normal">{ex.notes}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-800 text-[10px] font-bold">
+                            {ex.category}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5 text-slate-500">{ex.date}</td>
+                        <td className="px-3 py-2.5 font-extrabold text-rose-600 dark:text-rose-400 font-mono">
+                          {formatCurrency(ex.amount, isBangla)}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          {isAdmin && (
+                            <button
+                              onClick={() => handleDeletePicnicExpense(selectedPicnic.id, ex.id)}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                              title="Delete Expense"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="text-center py-16 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
@@ -481,6 +626,107 @@ export const PicnicView: React.FC<Props> = ({
               {isBangla ? 'পিকনিক তৈরি করুন' : 'Create Picnic'}
             </button>
           )}
+        </div>
+      )}
+
+      {/* Modal: Add Picnic Expense */}
+      {showExpenseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+              <div className="flex items-center gap-2">
+                <Receipt className="w-5 h-5 text-rose-500" />
+                <h3 className="font-extrabold text-base text-slate-900 dark:text-white">
+                  {isBangla ? 'পিকনিক খরচ যোগ করুন' : 'Add Picnic Expense'}
+                </h3>
+              </div>
+              <button
+                onClick={() => setShowExpenseModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddPicnicExpense} className="p-5 space-y-3.5">
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  {isBangla ? 'খরচের বিবরণ *' : 'Expense Title *'}
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={expTitle}
+                  onChange={(e) => setExpTitle(e.target.value)}
+                  placeholder={isBangla ? 'যেমন: বাস ভাড়া বা দুপুরের খাবার' : 'e.g. Bus Rental / Buffet Lunch'}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    {isBangla ? 'খাত' : 'Category'}
+                  </label>
+                  <select
+                    value={expCategory}
+                    onChange={(e) => setExpCategory(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="Food">{isBangla ? 'খাবার (Food)' : 'Food'}</option>
+                    <option value="Transport">{isBangla ? 'পরিবহন (Transport)' : 'Transport'}</option>
+                    <option value="Venue">{isBangla ? 'ভেন্যু/রিসোর্ট (Venue)' : 'Venue'}</option>
+                    <option value="Prizes">{isBangla ? 'র‍্যাফেল ড্র/পুরস্কার (Prizes)' : 'Prizes'}</option>
+                    <option value="Other">{isBangla ? 'অন্যান্য (Other)' : 'Other'}</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                    {isBangla ? 'পরিমাণ (টাকা) *' : 'Amount (৳) *'}
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    required
+                    value={expAmount}
+                    onChange={(e) => setExpAmount(e.target.value === '' ? '' : Number(e.target.value))}
+                    placeholder="5000"
+                    className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                  {isBangla ? 'নোট (ঐচ্ছিক)' : 'Notes (Optional)'}
+                </label>
+                <input
+                  type="text"
+                  value={expNotes}
+                  onChange={(e) => setExpNotes(e.target.value)}
+                  placeholder={isBangla ? 'ভাউচার বা অতিরিক্ত তথ্য' : 'Voucher or details'}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowExpenseModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                >
+                  {isBangla ? 'বাতিল' : 'Cancel'}
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs"
+                >
+                  {isBangla ? 'খরচ সেভ করুন' : 'Save Expense'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

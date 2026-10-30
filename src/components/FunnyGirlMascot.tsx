@@ -5,25 +5,44 @@ export type MascotMood =
   | 'idle'
   | 'watching'
   | 'hiding'
+  | 'covering_eyes'
   | 'peeking'
   | 'error'
-  | 'excited';
+  | 'excited'
+  | 'success';
 
 interface Props {
   mood: MascotMood;
   lookProgress?: number; // 0 to 1 based on text length
+  inputLength?: number;
   customMessage?: string;
-  lang: Language;
+  lang?: Language;
+  isBangla?: boolean;
   activeTab?: 'login' | 'signup' | 'admin';
 }
 
 export const FunnyGirlMascot: React.FC<Props> = ({
-  mood,
-  lookProgress = 0.5,
+  mood: rawMood,
+  lookProgress: rawLookProgress,
+  inputLength,
   customMessage,
-  lang,
+  lang: rawLang,
+  isBangla: isBanglaProp,
   activeTab = 'login',
 }) => {
+  const mood =
+    rawMood === 'covering_eyes'
+      ? 'hiding'
+      : rawMood === 'success'
+      ? 'excited'
+      : rawMood;
+  const lang: Language = rawLang || (isBanglaProp === false ? 'en' : 'bn');
+  const lookProgress =
+    rawLookProgress !== undefined
+      ? rawLookProgress
+      : inputLength !== undefined
+      ? Math.min(1, Math.max(0.1, inputLength / 16))
+      : 0.5;
   const isBangla = lang === 'bn';
   const [isBlinking, setIsBlinking] = useState(false);
   const [pokeIndex, setPokeIndex] = useState<number | null>(null);

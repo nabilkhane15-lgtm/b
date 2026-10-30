@@ -1,16 +1,18 @@
 import React from 'react';
 import { PaymentStatus } from '../types';
 import { translations, Language } from '../utils/language';
-import { CheckCircle2, Clock, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock, AlertCircle, CalendarClock } from 'lucide-react';
 
 interface Props {
-  status: PaymentStatus;
+  status: PaymentStatus | 'UPCOMING';
   lang: Language;
   size?: 'sm' | 'md';
+  isUpcoming?: boolean;
 }
 
-export const StatusBadge: React.FC<Props> = ({ status, lang, size = 'md' }) => {
+export const StatusBadge: React.FC<Props> = ({ status, lang, size = 'md', isUpcoming = false }) => {
   const t = translations[lang];
+  const isBangla = lang === 'bn';
 
   if (status === 'PAID') {
     return (
@@ -34,6 +36,19 @@ export const StatusBadge: React.FC<Props> = ({ status, lang, size = 'md' }) => {
       >
         <Clock className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
         {t.status_partial}
+      </span>
+    );
+  }
+
+  if (status === 'UPCOMING' || isUpcoming) {
+    return (
+      <span
+        className={`inline-flex items-center gap-1 font-semibold rounded-full bg-sky-100 text-sky-800 dark:bg-sky-950/80 dark:text-sky-300 border border-sky-300 dark:border-sky-800 ${
+          size === 'sm' ? 'px-2 py-0.5 text-xs' : 'px-2.5 py-1 text-xs'
+        }`}
+      >
+        <CalendarClock className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400" />
+        {isBangla ? 'আসন্ন' : 'Upcoming'}
       </span>
     );
   }

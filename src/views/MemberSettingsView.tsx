@@ -8,10 +8,13 @@ import {
   FundContribution,
   SportType,
   MemberCategory,
+  Week,
+  MonthRecord,
 } from '../types';
 import { formatCurrency, formatNumber, Language, translations } from '../utils/language';
 import { SPORTS_MAP } from '../utils/sports';
 import { processImageFile } from '../utils/imageUtils';
+import { isWeekUpcoming, isMonthUpcoming } from '../utils/accounting';
 import {
   User,
   Phone,
@@ -42,6 +45,8 @@ interface Props {
   member: Member;
   payments: Payment[];
   monthlyPayments: MonthlyPayment[];
+  weeks?: Week[];
+  months?: MonthRecord[];
   savingsDeposits: SavingsDeposit[];
   fundContributions: FundContribution[];
   funds: CustomFund[];
@@ -58,6 +63,8 @@ export const MemberSettingsView: React.FC<Props> = ({
   member,
   payments,
   monthlyPayments,
+  weeks = [],
+  months = [],
   savingsDeposits,
   fundContributions,
   funds,
@@ -112,17 +119,28 @@ export const MemberSettingsView: React.FC<Props> = ({
     setMemberCategory(member.memberCategory || 'youth');
   }, [member]);
 
-  // Compute Personal Financial Summary
+  // Compute Personal Financial Summary (excluding upcoming unpaid weeks/months)
   const isPatronOnly = member.participatesInSports === false;
+  const upcomingWeekIds = new Set(weeks.filter((w) => isWeekUpcoming(w)).map((w) => w.id));
+  const upcomingMonthIds = new Set(months.filter((m) => isMonthUpcoming(m)).map((m) => m.id));
+
   const myWeeklyPayments = payments
     .filter((p) => p.memberId === member.id)
     .map((p) =>
-      isPatronOnly && (p.paidAmount || 0) === 0 ? { ...p, expectedAmount: 0 } : p
+      (isPatronOnly || upcomingWeekIds.has(p.weekId)) && (p.paidAmount || 0) === 0
+        ? { ...p, expectedAmount: 0 }
+        : p
     );
   const totalWeeklyExpected = myWeeklyPayments.reduce((acc, p) => acc + (p.expectedAmount || 0), 0);
   const totalWeeklyPaid = myWeeklyPayments.reduce((acc, p) => acc + (p.paidAmount || 0), 0);
 
-  const myMonthlyPayments = monthlyPayments.filter((p) => p.memberId === member.id);
+  const myMonthlyPayments = monthlyPayments
+    .filter((p) => p.memberId === member.id)
+    .map((p) =>
+      upcomingMonthIds.has(p.monthId) && (p.paidAmount || 0) === 0
+        ? { ...p, expectedAmount: 0 }
+        : p
+    );
   const totalMonthlyExpected = myMonthlyPayments.reduce((acc, p) => acc + (p.expectedAmount || 0), 0);
   const totalMonthlyPaid = myMonthlyPayments.reduce((acc, p) => acc + (p.paidAmount || 0), 0);
 

@@ -49,6 +49,7 @@ interface Props {
   onOpenFirebaseModal?: () => void;
   adminProfile?: AdminProfile;
   onOpenAdminProfile?: () => void;
+  onSyncAllMemberFees?: () => void;
 }
 
 export const SettingsView: React.FC<Props> = ({
@@ -66,11 +67,13 @@ export const SettingsView: React.FC<Props> = ({
   onOpenFirebaseModal,
   adminProfile,
   onOpenAdminProfile,
+  onSyncAllMemberFees,
 }) => {
   const t = translations[lang];
   const isBangla = lang === 'bn';
   const [copied, setCopied] = useState(false);
   const [savedClub, setSavedClub] = useState(false);
+  const [syncedFeesSuccess, setSyncedFeesSuccess] = useState(false);
   const [isPhotoLightboxOpen, setIsPhotoLightboxOpen] = useState(false);
   const [exportedSuccess, setExportedSuccess] = useState(false);
 
@@ -85,11 +88,29 @@ export const SettingsView: React.FC<Props> = ({
   const [defaultWeeklyFee, setDefaultWeeklyFee] = useState<number>(
     clubSettings.defaultWeeklyFee || 350
   );
+  const [childWeeklyFee, setChildWeeklyFee] = useState<number>(
+    clubSettings.childWeeklyFee ?? 100
+  );
+  const [teenWeeklyFee, setTeenWeeklyFee] = useState<number>(
+    clubSettings.teenWeeklyFee ?? 200
+  );
+  const [youthWeeklyFee, setYouthWeeklyFee] = useState<number>(
+    clubSettings.youthWeeklyFee ?? clubSettings.defaultWeeklyFee ?? 350
+  );
   const [defaultMonthlyFee, setDefaultMonthlyFee] = useState<number>(
     clubSettings.defaultMonthlyFee || 1400
   );
   const [defaultMonthlySavings, setDefaultMonthlySavings] = useState<number>(
     clubSettings.defaultMonthlySavings || 500
+  );
+  const [defaultFundAmount, setDefaultFundAmount] = useState<number>(
+    clubSettings.defaultFundAmount ?? 500
+  );
+  const [defaultPicnicFee, setDefaultPicnicFee] = useState<number>(
+    clubSettings.defaultPicnicFee ?? 1000
+  );
+  const [defaultTournamentFee, setDefaultTournamentFee] = useState<number>(
+    clubSettings.defaultTournamentFee ?? 500
   );
   const [messengerLink, setMessengerLink] = useState<string>(
     clubSettings.messengerLink || ''
@@ -164,9 +185,15 @@ export const SettingsView: React.FC<Props> = ({
       established: established.trim(),
       sportType,
       collectionFrequency,
-      defaultWeeklyFee: Number(defaultWeeklyFee) || 350,
+      defaultWeeklyFee: Number(youthWeeklyFee) || Number(defaultWeeklyFee) || 350,
+      childWeeklyFee: Number(childWeeklyFee) || 100,
+      teenWeeklyFee: Number(teenWeeklyFee) || 200,
+      youthWeeklyFee: Number(youthWeeklyFee) || 350,
       defaultMonthlyFee: Number(defaultMonthlyFee) || 1400,
       defaultMonthlySavings: Number(defaultMonthlySavings) || 500,
+      defaultFundAmount: Number(defaultFundAmount) || 500,
+      defaultPicnicFee: Number(defaultPicnicFee) || 1000,
+      defaultTournamentFee: Number(defaultTournamentFee) || 500,
       messengerLink: messengerLink.trim(),
       logoUrl: logoUrl.trim(),
     });
@@ -567,7 +594,51 @@ export const SettingsView: React.FC<Props> = ({
                 ))}
               </div>
 
-              {/* Default Fee Inputs */}
+              {/* Category Weekly Fee Inputs (Child ৳100, Teen ৳200, Youth ৳350) */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '🧒 বাচ্চা (Child) সাপ্তাহিক ফি (৳)' : '🧒 Child Weekly Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={childWeeklyFee}
+                    onChange={(e) => setChildWeeklyFee(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '🧑‍🦱 কিশোর (Teen) সাপ্তাহিক ফি (৳)' : '🧑‍🦱 Teen Weekly Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={teenWeeklyFee}
+                    onChange={(e) => setTeenWeeklyFee(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '👨‍🦱 যুবক (Youth) সাপ্তাহিক ফি (৳)' : '👨‍🦱 Youth Weekly Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={youthWeeklyFee}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      setYouthWeeklyFee(val);
+                      setDefaultWeeklyFee(val);
+                    }}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* Default Monthly & Savings Fee Inputs */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
                 <div>
                   <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
@@ -605,7 +676,109 @@ export const SettingsView: React.FC<Props> = ({
                     className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold text-emerald-600"
                   />
                 </div>
+              </div>
 
+              {/* Additional Determined Fees: Special Fund, Picnic, Tournament */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2">
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '🤝 বিশেষ ফান্ড ডিফল্ট ফি (৳)' : '🤝 Default Special Fund Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={defaultFundAmount}
+                    onChange={(e) => setDefaultFundAmount(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '🏕️ পিকনিক নির্ধারিত ফি (৳)' : '🏕️ Default Picnic Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={defaultPicnicFee}
+                    onChange={(e) => setDefaultPicnicFee(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                    {isBangla ? '🏆 টুর্নামেন্ট এন্ট্রি ফি (৳)' : '🏆 Default Tournament Fee (৳)'}
+                  </label>
+                  <input
+                    type="number"
+                    disabled={!isAdmin}
+                    value={defaultTournamentFee}
+                    onChange={(e) => setDefaultTournamentFee(Number(e.target.value))}
+                    className="w-full px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border-0 text-xs font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* 1-Click Sync Button to Apply Determined Category Fees to All Existing Members */}
+              {isAdmin && onSyncAllMemberFees && (
+                <div className="pt-2">
+                  <div className="p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/50 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                    <div>
+                      <p className="text-xs font-extrabold text-emerald-900 dark:text-emerald-200">
+                        {isBangla
+                          ? 'সকল সদস্যের বর্তমান নির্ধারিত ফি এক ক্লিকে আপডেট করুন'
+                          : 'Apply Category Fees to All Existing Members'}
+                      </p>
+                      <p className="text-[10px] text-emerald-700/80 dark:text-emerald-400/80">
+                        {isBangla
+                          ? 'উপরের নির্ধারিত ফি সেভ করে এই বাটনে চাপলে সকল সদস্যের সাপ্তাহিক ও মাসিক নির্ধারিত ফি এবং চলতি অপরিশোধিত সপ্তাহের ধার্য ফি স্বয়ংক্রিয়ভাবে আপডেট হবে।'
+                          : 'Updates all members weekly & monthly fees and open unpaid periods according to their category.'}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onUpdateClubSettings({
+                          ...clubSettings,
+                          clubName: clubName.trim() || clubSettings.clubName,
+                          clubNameBangla: clubNameBangla.trim() || clubName.trim() || clubSettings.clubNameBangla,
+                          location: location.trim(),
+                          established: established.trim(),
+                          sportType,
+                          collectionFrequency,
+                          defaultWeeklyFee: Number(youthWeeklyFee) || Number(defaultWeeklyFee) || 350,
+                          childWeeklyFee: Number(childWeeklyFee) || 100,
+                          teenWeeklyFee: Number(teenWeeklyFee) || 200,
+                          youthWeeklyFee: Number(youthWeeklyFee) || 350,
+                          defaultMonthlyFee: Number(defaultMonthlyFee) || 1400,
+                          defaultMonthlySavings: Number(defaultMonthlySavings) || 500,
+                          defaultFundAmount: Number(defaultFundAmount) || 500,
+                          defaultPicnicFee: Number(defaultPicnicFee) || 1000,
+                          defaultTournamentFee: Number(defaultTournamentFee) || 500,
+                          messengerLink: messengerLink.trim(),
+                          logoUrl: logoUrl.trim(),
+                        });
+                        onSyncAllMemberFees();
+                        setSyncedFeesSuccess(true);
+                        setTimeout(() => setSyncedFeesSuccess(false), 3000);
+                      }}
+                      className="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold shadow-sm flex items-center justify-center gap-1.5 shrink-0 transition-all active:scale-95"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>
+                        {syncedFeesSuccess
+                          ? isBangla
+                            ? '✓ সকল সদস্যের ফি আপডেট হয়েছে!'
+                            : '✓ All Member Fees Synced!'
+                          : isBangla
+                          ? 'সকল সদস্যের ফি আপডেট করুন'
+                          : 'Sync Fees to All Members'}
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
                 {/* Facebook Messenger Group / Chat Link */}
                 <div className="md:col-span-2">
                   <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">

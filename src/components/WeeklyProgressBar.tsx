@@ -1,362 +1,346 @@
-import React, { useState, useEffect } from 'react';
-import { formatCurrency, formatNumber, Language } from '../utils/language';
-import {
-  CustomFund,
-  FundContribution,
-  FundExpense,
-  TabType,
-} from '../types';
-import {
-  Target,
-  TrendingUp,
-  Coins,
-  ChevronLeft,
-  ChevronRight,
-  ArrowUpRight,
-  Users,
-  Wallet,
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Flame, CheckCircle2, Clock, Sparkles, ChevronLeft, ChevronRight, HeartHandshake } from 'lucide-react';
+import { CustomFund, FundContribution, FundExpense, TabType } from '../types';
+import { Language, translations, formatCurrency } from '../utils/language';
+import { calculateFundMetrics } from '../utils/accounting';
+
+export interface FundBannerItem {
+  id: string;
+  name: string;
+  banglaName: string;
+  icon: string;
+  target: number;
+  collected: number;
+  paidCount: number;
+  totalMembers: number;
+}
 
 interface Props {
-  collected: number;
-  target: number;
-  weekTitle: string;
   lang: Language;
+  weekLabel?: string;
+  weekTitle?: string;
+  target: number;
+  collected: number;
+  paidCount?: number;
   paidMembersCount?: number;
   unpaidMembersCount?: number;
   weeklyMemberDue?: number;
+  totalMembers?: number;
   funds?: CustomFund[];
   fundContributions?: FundContribution[];
   fundExpenses?: FundExpense[];
+  fundBanners?: FundBannerItem[];
   onNavigate?: (tab: TabType) => void;
+  onSelectFundTab?: () => void;
 }
 
 export const WeeklyProgressBar: React.FC<Props> = ({
-  collected,
-  target,
-  weekTitle,
   lang,
+  weekLabel,
+  weekTitle,
+  target,
+  collected,
+  paidCount,
   paidMembersCount = 0,
   unpaidMembersCount = 0,
-  weeklyMemberDue = 0,
+  weeklyMemberDue,
+  totalMembers,
   funds = [],
   fundContributions = [],
   fundExpenses = [],
+  fundBanners = [],
   onNavigate,
+  onSelectFundTab,
 }) => {
+  const t = translations[lang];
   const isBangla = lang === 'bn';
-  const [activeSlide, setActiveSlide] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
 
-  // Build slides: All active Custom Funds + Weekly Target
-  const activeFunds = funds.filter((f) => f.status === 'ACTIVE');
+  const resolvedWeekLabel = weekTitle || weekLabel || (isBangla ? 'চলতি সপ্তাহ' : 'Current Week');
+  const resolvedPaidCount = paidCount ?? paidMembersCount;
+  const resolvedTotalMembers = totalMembers ?? resolvedPaidCount + unpaidMembersCount;
 
-  // Put active funds first if any exist so user immediately sees their created fund(s) alongside weekly target, and auto-scrolls through all of them!
-  const slides = [
-    ...activeFunds.map((fund) => {
-      const contribs = fundContributions.filter((c) => c.fundId === fund.id);
-      const exps = fundExpenses.filter((e) => e.fundId === fund.id);
-      const raised = contribs.reduce((acc, c) => acc + (c.paidAmount || 0), 0);
-      const expectedTotal = contribs.reduce((acc, c) => acc + (c.expectedAmount || 0), 0);
-      const memberDue = Math.max(0, expectedTotal - raised);
-      const spent = exps.reduce((acc, e) => acc + (e.amount || 0), 0);
-      const netBalance = raised - spent;
-      const fundTarget = fund.targetAmount || expectedTotal || 1000;
-      const pct = fundTarget > 0 ? Math.min(100, Math.round((raised / fundTarget) * 100)) : 0;
-      const remainingToTarget = Math.max(0, fundTarget - raised);
-      const paidCount = contribs.filter((c) => c.status === 'PAID').length;
-      const unpaidCount = contribs.filter((c) => c.status !== 'PAID').length;
-
-      return {
-        type: 'fund' as const,
-        id: fund.id,
-        icon: fund.icon || '🤝',
-        badge: isBangla ? 'বিশেষ তহবিল / ফান্ড ড্যাশবোর্ড' : 'Special Fund Dashboard',
-        title: isBangla && fund.titleBangla ? fund.titleBangla : fund.title,
-        subtitle: fund.description || fund.category,
-        collected: raised,
-        target: fundTarget,
-        remainingToTarget,
-        memberDue,
-        netBalance,
-        spent,
-        percentage: pct,
-        paidCount,
-        unpaidCount,
-        tab: 'funds' as TabType,
-      };
-    }),
-    {
+  const slides = useMemo(() => {
+    const weeklySlide = {
+      id: 'weekly_main',
       type: 'weekly' as const,
-      id: 'weekly-target',
+      badge: isBangla ? 'সাপ্তাহিক লক্ষ্যমাত্রা' : t.target_progress,
+      title: resolvedWeekLabel,
       icon: '🏸',
-      badge: isBangla ? 'সাপ্তাহিক সংগ্রহের লক্ষ্যমাত্রা' : 'Weekly Collection Target',
-      title: weekTitle,
-      subtitle: isBangla
-        ? 'চলতি সপ্তাহের নিয়মিত খেলার চাঁদা ও লক্ষ্যমাত্রা'
-        : 'Current week regular sports fee collection & target',
-      collected,
-      target,
-      remainingToTarget: Math.max(0, target - collected),
-      memberDue: weeklyMemberDue,
-      netBalance: collected,
-      spent: 0,
-      percentage: target > 0 ? Math.min(100, Math.round((collected / target) * 100)) : 0,
-      paidCount: paidMembersCount,
-      unpaidCount: unpaidMembersCount,
-      tab: 'weekly' as TabType,
-    },
-  ];
+      target: Math.max(0, Math.round(target || 0)),
+      collected: Math.max(0, Math.round(collected || 0)),
+      due:
+        weeklyMemberDue !== undefined
+          ? Math.max(0, Math.round(weeklyMemberDue))
+          : Math.max(0, Math.round((target || 0) - (collected || 0))),
+      paidCount: resolvedPaidCount,
+      totalCount: resolvedTotalMembers,
+    };
 
-  const totalSlides = slides.length;
+    const dynamicFundSlides =
+      fundBanners.length > 0
+        ? fundBanners.map((f) => ({
+            id: `fund_${f.id}`,
+            type: 'fund' as const,
+            badge: isBangla ? 'বিশেষ তহবিল / ফান্ড' : 'Special Club Fund',
+            title: isBangla ? f.banglaName || f.name : f.name,
+            icon: f.icon || '💝',
+            target: Math.max(0, Math.round(f.target || 0)),
+            collected: Math.max(0, Math.round(f.collected || 0)),
+            due: Math.max(0, Math.round((f.target || 0) - (f.collected || 0))),
+            paidCount: f.paidCount,
+            totalCount: f.totalMembers,
+          }))
+        : funds
+            .filter((f) => f.status === 'ACTIVE' || f.isActive)
+            .map((f) => {
+              const metrics = calculateFundMetrics(f, fundContributions, fundExpenses);
+              return {
+                id: `fund_${f.id}`,
+                type: 'fund' as const,
+                badge: isBangla ? 'বিশেষ তহবিল / ফান্ড' : 'Special Club Fund',
+                title: isBangla
+                  ? f.titleBangla || f.banglaName || f.title || f.name || ''
+                  : f.title || f.name || '',
+                icon: f.icon || '💝',
+                target: metrics.effectiveTarget,
+                collected: metrics.collected,
+                due: metrics.due,
+                paidCount: metrics.paidCount,
+                totalCount:
+                  metrics.paidCount + metrics.partialCount + metrics.unpaidCount ||
+                  resolvedTotalMembers,
+              };
+            });
 
-  // Reset slide index if slides length changes
+    return [weeklySlide, ...dynamicFundSlides];
+  }, [
+    isBangla,
+    t.target_progress,
+    resolvedWeekLabel,
+    target,
+    collected,
+    weeklyMemberDue,
+    resolvedPaidCount,
+    resolvedTotalMembers,
+    fundBanners,
+    funds,
+    fundContributions,
+    fundExpenses,
+  ]);
+
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [isPaused, setIsPaused] = useState(false);
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+
   useEffect(() => {
-    if (activeSlide >= totalSlides) {
-      setActiveSlide(0);
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setPrefersReducedMotion(mediaQuery.matches);
+    const handler = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+    if (mediaQuery.addEventListener) {
+      mediaQuery.addEventListener('change', handler);
+      return () => mediaQuery.removeEventListener('change', handler);
     }
-  }, [totalSlides, activeSlide]);
+  }, []);
 
-  // Auto-scroll every 3.5 seconds when there are multiple slides
   useEffect(() => {
-    if (totalSlides <= 1 || isPaused) return;
+    if (activeIndex >= slides.length) {
+      setActiveIndex(0);
+    }
+  }, [slides.length, activeIndex]);
+
+  useEffect(() => {
+    if (slides.length <= 1 || isPaused || prefersReducedMotion) return;
     const timer = setInterval(() => {
-      setActiveSlide((prev) => (prev + 1) % totalSlides);
+      setActiveIndex((prev) => (prev + 1) % slides.length);
     }, 3500);
     return () => clearInterval(timer);
-  }, [totalSlides, isPaused]);
+  }, [slides.length, isPaused, prefersReducedMotion]);
 
-  const current = slides[activeSlide] || slides[0];
-  const isFundSlide = current.type === 'fund';
+  const current = slides[activeIndex] || slides[0];
+  const rawPct = current.target > 0 ? Math.round((current.collected / current.target) * 100) : 0;
+  const pct = Math.min(100, Math.max(0, rawPct));
+  const remaining = current.due;
+  const isComplete = current.target > 0 && rawPct >= 100;
+  const isFund = current.type === 'fund';
 
-  const handlePrev = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveSlide((prev) => (prev - 1 + totalSlides) % totalSlides);
-  };
-
-  const handleNext = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setActiveSlide((prev) => (prev + 1) % totalSlides);
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (slides.length <= 1) return;
+    if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev + 1) % slides.length);
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev - 1 + slides.length) % slides.length);
+    }
   };
 
   return (
     <div
+      role="region"
+      aria-roledescription="carousel"
+      aria-label={isBangla ? 'সাপ্তাহিক ও ফান্ড লক্ষ্যমাত্রা ব্যানার' : 'Weekly and Fund Target Progress Banner'}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
       onMouseEnter={() => setIsPaused(true)}
       onMouseLeave={() => setIsPaused(false)}
       onTouchStart={() => setIsPaused(true)}
       onTouchEnd={() => setIsPaused(false)}
-      className={`relative overflow-hidden rounded-3xl p-5 sm:p-6 text-white shadow-xl border transition-all duration-500 ${
-        isFundSlide
-          ? 'bg-gradient-to-br from-indigo-900 via-purple-900 to-slate-950 border-indigo-500/40'
-          : 'bg-gradient-to-br from-emerald-800 via-emerald-900 to-slate-950 border-emerald-600/50'
-      }`}
+      onFocus={() => setIsPaused(true)}
+      onBlur={() => setIsPaused(false)}
+      className={`relative overflow-hidden rounded-2xl border transition-all duration-500 focus:outline-none focus:ring-2 focus:ring-emerald-400 ${
+        isFund
+          ? 'bg-gradient-to-r from-indigo-950 via-purple-950 to-slate-900 border-purple-500/30'
+          : 'bg-gradient-to-r from-slate-900 via-emerald-950 to-slate-900 border-emerald-500/20'
+      } text-white p-4 sm:p-5 shadow-xl`}
     >
-      {/* Decorative Background Watermark Icon */}
-      <div className="absolute right-4 -bottom-4 opacity-15 text-8xl sm:text-9xl select-none pointer-events-none font-bold transition-transform duration-500">
-        {current.icon}
-      </div>
-
-      <div className="relative z-10">
-        {/* Top Row: Slide Type Badge + Slide Counter / Percentage */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-          <div className="flex items-center gap-2">
+      <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 flex-wrap">
             <span
-              className={`p-1.5 rounded-xl text-base flex items-center justify-center shadow-sm ${
-                isFundSlide
-                  ? 'bg-indigo-500/30 text-indigo-200 border border-indigo-400/30'
-                  : 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/30'
+              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold border ${
+                isFund
+                  ? 'bg-purple-500/20 text-purple-300 border-purple-400/30'
+                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30'
               }`}
             >
-              {isFundSlide ? <Coins className="w-4 h-4" /> : <Target className="w-4 h-4" />}
+              {isFund ? (
+                <HeartHandshake className="w-3.5 h-3.5 text-pink-400" />
+              ) : (
+                <Flame className="w-3.5 h-3.5 text-amber-400" />
+              )}
+              {current.badge}
             </span>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span
-                  className={`text-[10px] sm:text-xs font-extrabold uppercase tracking-wider ${
-                    isFundSlide ? 'text-indigo-200' : 'text-emerald-200'
-                  }`}
+
+            {slides.length > 1 && (
+              <div className="inline-flex items-center gap-1 bg-white/10 px-2 py-0.5 rounded-full text-[11px] font-bold text-slate-200">
+                <button
+                  type="button"
+                  aria-label={isBangla ? 'পূর্ববর্তী স্লাইড' : 'Previous slide'}
+                  onClick={() => setActiveIndex((prev) => (prev - 1 + slides.length) % slides.length)}
+                  className="hover:text-emerald-300 p-0.5"
                 >
-                  {current.badge}
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span>
+                  {activeIndex + 1}/{slides.length}
                 </span>
-                {totalSlides > 1 && (
-                  <span className="px-2 py-0.2 rounded-full bg-white/15 text-[10px] font-mono font-bold text-white">
-                    {formatNumber(activeSlide + 1, isBangla)}/{formatNumber(totalSlides, isBangla)}
-                  </span>
-                )}
+                <button
+                  type="button"
+                  aria-label={isBangla ? 'পরবর্তী স্লাইড' : 'Next slide'}
+                  onClick={() => setActiveIndex((prev) => (prev + 1) % slides.length)}
+                  className="hover:text-emerald-300 p-0.5"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <h3 className="text-base sm:text-lg font-black text-white flex items-center gap-1.5 mt-0.5">
-                <span>{current.icon}</span>
-                <span>{current.title}</span>
-              </h3>
-            </div>
-          </div>
+            )}
 
-          <div className="flex items-center gap-2">
-            <div className="inline-flex items-center gap-1 rounded-full bg-lime-400/20 px-2.5 py-1 text-xs font-extrabold text-lime-300 border border-lime-400/40">
-              <TrendingUp className="w-3.5 h-3.5" />
-              <span>
-                {formatNumber(current.percentage, isBangla)}% {isBangla ? 'সম্পন্ন' : 'Done'}
-              </span>
-            </div>
+            <span className="text-xs text-slate-300 font-medium flex items-center gap-1">
+              <span>{current.icon}</span>
+              <span className="font-bold text-white">{current.title}</span>
+            </span>
 
-            {onNavigate && (
+            {isFund && (onSelectFundTab || onNavigate) && (
               <button
                 type="button"
-                onClick={() => onNavigate(current.tab)}
-                className="px-2.5 py-1 rounded-full bg-white/15 hover:bg-white/25 text-white text-[11px] font-bold flex items-center gap-1 border border-white/20 transition-all"
+                onClick={() => {
+                  if (onSelectFundTab) onSelectFundTab();
+                  else if (onNavigate) onNavigate('funds');
+                }}
+                className="text-[11px] underline text-purple-300 hover:text-white font-bold ml-1"
               >
-                <span>{isBangla ? 'বিস্তারিত' : 'Details'}</span>
-                <ArrowUpRight className="w-3 h-3" />
+                {isBangla ? 'ফান্ড বিস্তারিত →' : 'View Fund →'}
               </button>
             )}
           </div>
-        </div>
 
-        {/* Subtitle if available */}
-        {current.subtitle && (
-          <p className="text-xs text-slate-300/90 mb-3 line-clamp-1">{current.subtitle}</p>
-        )}
-
-        {/* Main Numbers Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-3.5 bg-black/25 backdrop-blur-sm p-3 rounded-2xl border border-white/10">
-          {/* Collected / Raised */}
-          <div>
-            <span className="text-[10px] text-slate-300 block font-semibold">
-              {isFundSlide
-                ? isBangla
-                  ? 'ফান্ডে মোট জমা'
-                  : 'Total Raised'
-                : isBangla
-                ? 'এ সপ্তাহে আদায়'
-                : 'Collected'}
-            </span>
-            <span className="text-lg sm:text-2xl font-black text-emerald-300 font-mono">
+          <div className="flex items-baseline gap-2 pt-1" aria-live="polite">
+            <span className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
               {formatCurrency(current.collected, isBangla)}
             </span>
-          </div>
-
-          {/* Target */}
-          <div>
-            <span className="text-[10px] text-slate-300 block font-semibold">
-              {isBangla ? 'মোট লক্ষ্যমাত্রা' : 'Target Goal'}
-            </span>
-            <span className="text-lg sm:text-2xl font-black text-white font-mono">
-              {formatCurrency(current.target, isBangla)}
-            </span>
-          </div>
-
-          {/* Member Due in this Fund/Week */}
-          <div>
-            <span className="text-[10px] text-slate-300 block font-semibold">
-              {isBangla ? 'সদস্যদের বকেয়া' : 'Member Dues'}
-            </span>
-            <span
-              className={`text-lg sm:text-2xl font-black font-mono ${
-                current.memberDue > 0 ? 'text-rose-300' : 'text-lime-300'
-              }`}
-            >
-              {formatCurrency(current.memberDue, isBangla)}
-            </span>
-          </div>
-
-          {/* Remaining to Target OR Net Vault Balance */}
-          <div>
-            <span className="text-[10px] text-slate-300 block font-semibold">
-              {isFundSlide
-                ? isBangla
-                  ? 'হাতে নিট ব্যালেন্স'
-                  : 'Net Fund Balance'
-                : isBangla
-                ? 'লক্ষ্যমাত্রা বাকি'
-                : 'Target Remaining'}
-            </span>
-            <span className="text-lg sm:text-2xl font-black text-amber-300 font-mono">
-              {isFundSlide
-                ? formatCurrency(current.netBalance, isBangla)
-                : current.remainingToTarget > 0
-                ? formatCurrency(current.remainingToTarget, isBangla)
-                : isBangla
-                ? '🎯 অর্জিত!'
-                : '🎯 Reached!'}
+            <span className="text-xs sm:text-sm text-slate-400">
+              / {formatCurrency(current.target, isBangla)}{' '}
+              {isFund ? (isBangla ? 'ফান্ড লক্ষ্যমাত্রা' : 'Fund Target') : t.weekly_target}
             </span>
           </div>
         </div>
 
-        {/* Visual Progress Bar */}
-        <div className="relative h-3.5 w-full rounded-full bg-slate-900/90 p-0.5 overflow-hidden border border-white/15">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ease-out ${
-              isFundSlide
-                ? 'bg-gradient-to-r from-fuchsia-400 via-purple-400 to-indigo-400 shadow-[0_0_12px_rgba(192,132,252,0.6)]'
-                : 'bg-gradient-to-r from-lime-400 via-emerald-400 to-teal-400 shadow-[0_0_12px_rgba(74,222,128,0.5)]'
-            }`}
-            style={{ width: `${Math.max(current.percentage, current.collected > 0 ? 6 : 0)}%` }}
-          />
-        </div>
-
-        {/* Bottom Status & Carousel Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 mt-3 pt-1">
-          <div className="flex items-center gap-3 text-[11px] font-semibold text-slate-200">
-            <span className="flex items-center gap-1">
-              <span>✅ {isBangla ? 'পরিশোধিত:' : 'Paid:'}</span>
-              <strong className="text-lime-300">{formatNumber(current.paidCount, isBangla)} {isBangla ? 'জন' : ''}</strong>
-            </span>
-            <span className="text-white/30">•</span>
-            <span className="flex items-center gap-1">
-              <span>❌ {isBangla ? 'বকেয়া:' : 'Unpaid:'}</span>
-              <strong className="text-rose-300">{formatNumber(current.unpaidCount, isBangla)} {isBangla ? 'জন' : ''}</strong>
-            </span>
-            {isFundSlide && current.spent > 0 && (
-              <>
-                <span className="text-white/30">•</span>
-                <span>
-                  {isBangla ? 'খরচ:' : 'Spent:'}{' '}
-                  <strong className="text-amber-300">{formatCurrency(current.spent, isBangla)}</strong>
-                </span>
-              </>
-            )}
-          </div>
-
-          {/* Slide Navigation Dots & Prev/Next Buttons */}
-          {totalSlides > 1 && (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handlePrev}
-                className="p-1 rounded-lg bg-white/10 hover:bg-white/25 text-white transition-colors"
-                title={isBangla ? 'পূর্ববর্তী' : 'Previous'}
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-
-              <div className="flex items-center gap-1 px-1">
-                {slides.map((s, idx) => (
-                  <button
-                    key={s.id}
-                    type="button"
-                    onClick={() => setActiveSlide(idx)}
-                    className={`h-2 rounded-full transition-all duration-300 ${
-                      idx === activeSlide
-                        ? 'w-6 bg-lime-400 shadow-sm'
-                        : 'w-2 bg-white/35 hover:bg-white/60'
-                    }`}
-                    title={s.title}
-                  />
-                ))}
+        <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            <div>
+              <div className="text-[11px] text-slate-400">
+                {isFund ? (isBangla ? 'পরিশোধিত সদস্য' : 'Paid Members') : t.paid_members}
               </div>
-
-              <button
-                type="button"
-                onClick={handleNext}
-                className="p-1 rounded-lg bg-white/10 hover:bg-white/25 text-white transition-colors"
-                title={isBangla ? 'পরবর্তী' : 'Next'}
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+              <div className="font-bold text-white">
+                {current.paidCount} / {current.totalCount}
+              </div>
             </div>
-          )}
+          </div>
+
+          <div className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+            <div>
+              <div className="text-[11px] text-slate-400">
+                {isBangla ? 'বকেয়া / বাকি' : t.total_due}
+              </div>
+              <div className="font-bold text-amber-300">
+                {formatCurrency(remaining, isBangla)}
+              </div>
+            </div>
+          </div>
+
+          <div
+            className={`px-3.5 py-2 rounded-xl font-extrabold text-base flex items-center gap-1.5 ${
+              isComplete
+                ? 'bg-emerald-500 text-slate-950 shadow-lg shadow-emerald-500/30'
+                : isFund
+                ? 'bg-purple-500/20 text-purple-200 border border-purple-400/30'
+                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+            }`}
+          >
+            {isComplete && <Sparkles className="w-4 h-4" />}
+            {rawPct}%
+          </div>
         </div>
       </div>
+
+      {/* Progress Bar */}
+      <div className="mt-3.5 relative h-3 w-full bg-slate-800 rounded-full overflow-hidden p-0.5 border border-white/10">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ease-out ${
+            isComplete
+              ? 'bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300'
+              : isFund
+              ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-amber-400'
+              : 'bg-gradient-to-r from-emerald-600 via-emerald-400 to-teal-400'
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {/* Slide Dots Indicator */}
+      {slides.length > 1 && (
+        <div className="mt-2.5 flex items-center justify-center gap-1.5">
+          {slides.map((s, idx) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setActiveIndex(idx)}
+              className={`h-1.5 rounded-full transition-all ${
+                idx === activeIndex
+                  ? isFund
+                    ? 'w-6 bg-purple-400'
+                    : 'w-6 bg-emerald-400'
+                  : 'w-1.5 bg-white/25 hover:bg-white/50'
+              }`}
+              title={s.title}
+              aria-label={s.title}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };

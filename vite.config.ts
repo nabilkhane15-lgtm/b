@@ -7,6 +7,24 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-    allowedHosts: true
-  }
+    allowedHosts: true,
+    proxy: {
+      '/api/resend': {
+        target: 'https://api.resend.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/resend/, ''),
+      },
+    },
+  },
+  preview: {
+    host: '0.0.0.0',
+    port: 3000,
+    proxy: {
+      '/api/resend': {
+        target: 'https://api.resend.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api\/resend/, ''),
+      },
+    },
+  },
 })

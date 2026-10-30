@@ -15,6 +15,7 @@ import {
   Crown,
   User,
   ShieldCheck,
+  Mail,
 } from 'lucide-react';
 
 interface Props {
@@ -57,6 +58,11 @@ export const BottomNav: React.FC<Props> = ({
   const tabs = [...baseTabs];
 
   if (isAdmin) {
+    tabs.push({
+      id: 'email',
+      label: isBangla ? 'ইমেইল রিমাইন্ডার' : 'Email Center',
+      icon: <Mail className="w-4 h-4 sm:w-5 sm:h-5 text-sky-500" />,
+    });
     tabs.push({
       id: 'settings',
       label: isBangla ? 'অ্যাডমিন সেটিংস' : 'Admin Settings',

@@ -19,6 +19,7 @@ import { translations, Language, formatCurrency, formatNumber } from '../utils/l
 import { SPORTS_MAP } from '../utils/sports';
 import { WeeklyProgressBar } from '../components/WeeklyProgressBar';
 import { StatusBadge } from '../components/StatusBadge';
+import { isWeekUpcoming } from '../utils/accounting';
 import {
   Users,
   Target,
@@ -127,11 +128,21 @@ export const DashboardView: React.FC<Props> = ({
   const patronsOnlyCount = members.filter((m) => m.participatesInSports === false).length;
 
   const memberMap = new Map<string, Member>(members.map((m) => [m.id, m]));
+  const weekMap = new Map<string, Week>(weeks.map((w) => [w.id, w]));
+  const isActiveWeekUpcoming = isWeekUpcoming(activeWeek);
 
-  // Helper: effective weekly expected amount for a payment (0 if member is Funding Patron / participatesInSports === false and hasn't paid)
+  // Helper: effective weekly expected amount for a payment (0 if member is Funding Patron, Monthly-only, or week is Upcoming and member hasn't paid)
   const getEffectiveWeeklyExpected = (p: Payment): number => {
     const mem = memberMap.get(p.memberId);
-    if (mem && mem.participatesInSports === false && (p.paidAmount || 0) === 0) {
+    if (
+      mem &&
+      (mem.participatesInSports === false || mem.contributionType === 'monthly') &&
+      (p.paidAmount || 0) === 0
+    ) {
+      return 0;
+    }
+    const wk = weekMap.get(p.weekId);
+    if (isWeekUpcoming(wk) && (p.paidAmount || 0) === 0) {
       return 0;
     }
     return p.expectedAmount || 0;
@@ -251,6 +262,16 @@ export const DashboardView: React.FC<Props> = ({
             >
               <Share2 className="w-3.5 h-3.5" />
               <span>{isBangla ? 'সবার সাথে শেয়ার' : 'Share Link'}</span>
+            </button>
+          )}
+          {isAdmin && (
+            <button
+              onClick={() => onNavigate('email')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-black shadow-sm transition-transform active:scale-95 shrink-0"
+              title={isBangla ? 'বকেয়া ও পরিশোধিত সদস্যদের ইমেইল রিমাইন্ডার পাঠান' : 'Open Email Reminder Dashboard'}
+            >
+              <span>📧</span>
+              <span>{isBangla ? 'ইমেইল রিমাইন্ডার' : 'Email Center'}</span>
             </button>
           )}
           {(['badminton', 'cricket', 'football'] as SportType[]).map((st) => {
@@ -855,6 +876,11 @@ export const DashboardView: React.FC<Props> = ({
               <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
                 {isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
               </span>
+              {isActiveWeekUpcoming && (
+                <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300">
+                  {isBangla ? '🗓️ আসন্ন (বকেয়া প্রযোজ্য নয়)' : '🗓️ Upcoming (No Due)'}
+                </span>
+              )}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               {isBangla
@@ -933,6 +959,10 @@ export const DashboardView: React.FC<Props> = ({
                     <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/50">
                       {isBangla ? 'সাপ্তাহিক চাঁদা প্রযোজ্য নয়' : 'No Weekly Fee'}
                     </span>
+                  ) : member.contributionType === 'monthly' && paid === 0 ? (
+                    <span className="text-[11px] font-bold px-2.5 py-1 rounded-xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 dark:text-purple-300 border border-purple-200/60 dark:border-purple-800/50">
+                      {isBangla ? '🗓️ মাসিক চাঁদা প্রযোজ্য' : '🗓️ Monthly Plan'}
+                    </span>
                   ) : (
                     <>
                       <div className="text-right">
@@ -944,7 +974,12 @@ export const DashboardView: React.FC<Props> = ({
                         </span>
                       </div>
 
-                      <StatusBadge status={status} lang={lang} size="sm" />
+                      <StatusBadge
+                        status={status}
+                        isUpcoming={isActiveWeekUpcoming && paid === 0}
+                        lang={lang}
+                        size="sm"
+                      />
                     </>
                   )}
 

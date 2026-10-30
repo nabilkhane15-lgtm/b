@@ -10,6 +10,7 @@ import {
   FundExpense,
 } from '../types';
 import { translations, Language, formatCurrency, formatNumber } from '../utils/language';
+import { isWeekUpcoming } from '../utils/accounting';
 import {
   BarChart3,
   Share2,
@@ -58,29 +59,60 @@ export const ReportsView: React.FC<Props> = ({
 
   const [timeframe, setTimeframe] = useState<ReportTimeframe>('ENTIRE_SEASON');
 
-  // Compute values according to timeframe
+  const upcomingWeekIds = new Set(weeks.filter((w) => isWeekUpcoming(w)).map((w) => w.id));
+  const getEffectiveExpected = (p: Payment): number => {
+    if (upcomingWeekIds.has(p.weekId) && Math.round(Number(p.paidAmount) || 0) === 0) {
+      return 0;
+    }
+    return Math.round(Number(p.expectedAmount) || 0);
+  };
+
+  // Compute values according to timeframe (strictly integer BDT, no fake multipliers)
+  const weeklyCollectedAll = payments.reduce((acc, p) => acc + Math.round(Number(p.paidAmount) || 0), 0);
+  const weeklyExpectedAll = payments.reduce((acc, p) => acc + getEffectiveExpected(p), 0);
+  const weeklyExpensesAll = expenses.reduce((acc, e) => acc + Math.round(Number(e.amount) || 0), 0);
+
+  const fundsRaisedAll = fundContributions.reduce((acc, c) => acc + Math.round(Number(c.paidAmount) || 0), 0);
+  const fundsExpectedAll = fundContributions.reduce((acc, c) => acc + Math.round(Number(c.expectedAmount) || 0), 0);
+  const fundsDisbursedAll = fundExpenses.reduce((acc, e) => acc + Math.round(Number(e.amount) || 0), 0);
+
   let targetCollection = 0;
   let targetExpenses = 0;
   let targetDue = 0;
 
   if (timeframe === 'THIS_WEEK') {
     const weekPayments = activeWeek ? payments.filter((p) => p.weekId === activeWeek.id) : [];
-    targetCollection = weekPayments.reduce((acc, p) => acc + p.paidAmount, 0);
-    const expected = weekPayments.reduce((acc, p) => acc + p.expectedAmount, 0);
+    targetCollection = weekPayments.reduce((acc, p) => acc + Math.round(Number(p.paidAmount) || 0), 0);
+    const expected = weekPayments.reduce((acc, p) => acc + getEffectiveExpected(p), 0);
     targetDue = Math.max(expected - targetCollection, 0);
-    // Recent 2 week expenses as week proxy
-    targetExpenses = expenses.slice(-2).reduce((acc, e) => acc + e.amount, 0);
+    const activeWeekDatePrefix = activeWeek?.startDate?.slice(3) || '';
+    const matchingWeekExps = activeWeekDatePrefix
+      ? expenses.filter((e) => e.date?.includes(activeWeekDatePrefix))
+      : expenses.slice(-2);
+    targetExpenses = (matchingWeekExps.length > 0 ? matchingWeekExps : expenses.slice(-2)).reduce(
+      (acc, e) => acc + Math.round(Number(e.amount) || 0),
+      0
+    );
   } else if (timeframe === 'THIS_MONTH') {
-    targetCollection = payments.reduce((acc, p) => acc + p.paidAmount, 0) * 0.85;
-    targetExpenses = expenses.reduce((acc, e) => acc + e.amount, 0) * 0.75;
-    const expected = payments.reduce((acc, p) => acc + p.expectedAmount, 0);
-    targetDue = Math.max(expected - targetCollection, 0);
+    // Last 4 weeks of weekly collections + recent month expenses + active special funds
+    const recentWeekIds = new Set(weeks.slice(-4).map((w) => w.id));
+    const monthPayments =
+      recentWeekIds.size > 0 ? payments.filter((p) => recentWeekIds.has(p.weekId)) : payments;
+    const monthWeeklyPaid = monthPayments.reduce((acc, p) => acc + Math.round(Number(p.paidAmount) || 0), 0);
+    const monthWeeklyExpected = monthPayments.reduce((acc, p) => acc + getEffectiveExpected(p), 0);
+    const monthWeeklyDue = Math.max(monthWeeklyExpected - monthWeeklyPaid, 0);
+    const fundsDue = Math.max(fundsExpectedAll - fundsRaisedAll, 0);
+
+    targetCollection = monthWeeklyPaid + fundsRaisedAll;
+    targetExpenses = weeklyExpensesAll + fundsDisbursedAll;
+    targetDue = monthWeeklyDue + fundsDue;
   } else {
-    // ENTIRE_SEASON
-    targetCollection = payments.reduce((acc, p) => acc + p.paidAmount, 0);
-    targetExpenses = expenses.reduce((acc, e) => acc + e.amount, 0);
-    const expected = payments.reduce((acc, p) => acc + p.expectedAmount, 0);
-    targetDue = Math.max(expected - targetCollection, 0);
+    // ENTIRE_SEASON (includes Weekly + Special Funds so it matches DashboardView)
+    const weeklyDue = Math.max(weeklyExpectedAll - weeklyCollectedAll, 0);
+    const fundsDue = Math.max(fundsExpectedAll - fundsRaisedAll, 0);
+    targetCollection = weeklyCollectedAll + fundsRaisedAll;
+    targetExpenses = weeklyExpensesAll + fundsDisbursedAll;
+    targetDue = weeklyDue + fundsDue;
   }
 
   // Mandatory formula: Current Balance = Total Collection - Total Expenses
@@ -97,7 +129,7 @@ export const ReportsView: React.FC<Props> = ({
     .map((m) => {
       const memberPayments = payments.filter((p) => p.memberId === m.id);
       const paid = memberPayments.reduce((acc, p) => acc + p.paidAmount, 0);
-      const expected = memberPayments.reduce((acc, p) => acc + p.expectedAmount, 0);
+      const expected = memberPayments.reduce((acc, p) => acc + getEffectiveExpected(p), 0);
       const due = Math.max(expected - paid, 0);
       const paidWeeks = memberPayments.filter((p) => p.status === 'PAID').length;
       return { member: m, paid, due, paidWeeks };

@@ -29,7 +29,12 @@ import {
   Search,
   Wallet,
   Coins,
+  CalendarClock,
+  Edit2,
+  Check,
+  X,
 } from 'lucide-react';
+import { isWeekUpcoming, isMonthUpcoming } from '../utils/accounting';
 
 interface Props {
   season: Season;
@@ -49,6 +54,8 @@ interface Props {
   onOpenCreateMonth: () => void;
   onDeleteWeek?: (weekId: string) => void;
   onDeleteMonth?: (monthId: string) => void;
+  onUpdateWeek?: (week: Week) => void;
+  onUpdateMonth?: (month: MonthRecord) => void;
   onOpenMonthlyPaymentModal: (payment: MonthlyPayment, month: MonthRecord, member: Member) => void;
   onOpenAddSavings: (memberId?: string) => void;
   onDeleteSavings?: (savingsId: string) => void;
@@ -72,6 +79,8 @@ export const WeeklyCollectionView: React.FC<Props> = ({
   onOpenCreateMonth,
   onDeleteWeek,
   onDeleteMonth,
+  onUpdateWeek,
+  onUpdateMonth,
   onOpenMonthlyPaymentModal,
   onOpenAddSavings,
   onDeleteSavings,
@@ -82,6 +91,10 @@ export const WeeklyCollectionView: React.FC<Props> = ({
   // Sub-tabs: 'weekly' | 'monthly' | 'savings'
   const [collectionTab, setCollectionTab] = useState<'weekly' | 'monthly' | 'savings'>('weekly');
   const [savingsSearch, setSavingsSearch] = useState('');
+  const [editingWeekTargetId, setEditingWeekTargetId] = useState<string | null>(null);
+  const [editingWeekTargetVal, setEditingWeekTargetVal] = useState<number>(0);
+  const [editingMonthTarget, setEditingMonthTarget] = useState<boolean>(false);
+  const [editingMonthTargetVal, setEditingMonthTargetVal] = useState<number>(0);
 
   // Active month
   const activeMonth = months.find((m) => m.id === activeMonthId) || months[0] || {
@@ -216,14 +229,17 @@ export const WeeklyCollectionView: React.FC<Props> = ({
             .reverse()
             .map((week) => {
               const isCurrent = week.id === activeWeekId;
+              const upcoming = isWeekUpcoming(week);
               const weekPayments = payments.filter((p) => p.weekId === week.id);
               const collected = weekPayments.reduce((acc, p) => acc + p.paidAmount, 0);
               const target = week.weeklyTarget || 5000;
-              const remaining = Math.max(target - collected, 0);
+              const remaining = upcoming ? 0 : Math.max(target - collected, 0);
               const percentage = target > 0 ? Math.min(Math.round((collected / target) * 100), 100) : 0;
 
               const paidCount = weekPayments.filter((p) => p.status === 'PAID').length;
-              const unpaidCount = weekPayments.filter((p) => p.status === 'UNPAID').length;
+              const unpaidCount = upcoming
+                ? 0
+                : weekPayments.filter((p) => p.status === 'UNPAID' && (p.expectedAmount || 0) > 0).length;
               const partialCount = weekPayments.filter((p) => p.status === 'PARTIAL').length;
               const weekTitle = isBangla && week.titleBangla ? week.titleBangla : week.title;
 
@@ -239,33 +255,81 @@ export const WeeklyCollectionView: React.FC<Props> = ({
                 >
                   <div>
                     {/* Card Header */}
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2.5">
                         <div
                           className={`w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm ${
-                            isCurrent
+                            upcoming
+                              ? 'bg-sky-100 dark:bg-sky-950 text-sky-600 dark:text-sky-400'
+                              : isCurrent
                               ? 'bg-emerald-600 text-white shadow-sm'
                               : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
                           }`}
                         >
-                          <CalendarDays className="w-4 h-4" />
+                          {upcoming ? <CalendarClock className="w-4 h-4" /> : <CalendarDays className="w-4 h-4" />}
                         </div>
                         <div>
-                          <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-2">
+                          <h3 className="font-extrabold text-base text-slate-900 dark:text-white flex items-center gap-1.5 flex-wrap">
                             <span>{weekTitle}</span>
                             {isCurrent && (
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                                {isBangla ? 'সক্রিয়' : 'Active'}
+                                {isBangla ? 'নির্বাচিত' : 'Selected'}
+                              </span>
+                            )}
+                            {upcoming && (
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+                                🗓️ {isBangla ? 'আসন্ন (বকেয়া নয়)' : 'Upcoming'}
                               </span>
                             )}
                           </h3>
                           <span className="text-xs text-slate-400">
-                            {week.startDate} - {week.endDate}
+                            {week.startDate} - {upcoming && week.endDate === 'Upcoming' ? (isBangla ? 'আসন্ন' : 'Upcoming') : week.endDate}
                           </span>
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        {isAdmin && onUpdateWeek && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const nextUpcoming = !upcoming;
+                              const defaultEnd = new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toLocaleDateString('en-GB');
+                              onUpdateWeek({
+                                ...week,
+                                isUpcoming: nextUpcoming,
+                                endDate:
+                                  !nextUpcoming && (week.endDate === 'Upcoming' || week.endDate === 'আসন্ন')
+                                    ? defaultEnd
+                                    : week.endDate,
+                              });
+                            }}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition-all ${
+                              upcoming
+                                ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-500'
+                                : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100'
+                            }`}
+                            title={
+                              upcoming
+                                ? isBangla
+                                  ? 'চলতি সপ্তাহ হিসেবে চালু করুন'
+                                  : 'Activate Week'
+                                : isBangla
+                                ? 'আসন্ন সপ্তাহ হিসেবে চিহ্নিত করুন'
+                                : 'Mark as Upcoming'
+                            }
+                          >
+                            {upcoming
+                              ? isBangla
+                                ? 'চালু করুন'
+                                : 'Activate'
+                              : isBangla
+                              ? 'আসন্ন করুন'
+                              : 'Upcoming'}
+                          </button>
+                        )}
+
                         <div className="text-right">
                           <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 block">
                             {formatNumber(percentage, isBangla)}%
@@ -300,11 +364,61 @@ export const WeeklyCollectionView: React.FC<Props> = ({
 
                     {/* Target and Numbers */}
                     <div className="grid grid-cols-3 gap-2 my-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-800 text-xs">
-                      <div>
+                      <div onClick={(e) => e.stopPropagation()}>
                         <span className="text-[10px] text-slate-400 block">{t.target}</span>
-                        <span className="font-bold text-slate-700 dark:text-slate-300">
-                          {formatCurrency(target, isBangla)}
-                        </span>
+                        {isAdmin && editingWeekTargetId === week.id ? (
+                          <div className="flex items-center gap-1 mt-0.5">
+                            <input
+                              type="number"
+                              min="0"
+                              value={editingWeekTargetVal}
+                              onChange={(e) => setEditingWeekTargetVal(Number(e.target.value))}
+                              className="w-16 px-1.5 py-0.5 text-xs font-bold rounded border border-emerald-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (onUpdateWeek) {
+                                  onUpdateWeek({
+                                    ...week,
+                                    weeklyTarget: Math.max(0, Math.round(Number(editingWeekTargetVal) || 0)),
+                                  });
+                                }
+                                setEditingWeekTargetId(null);
+                              }}
+                              className="p-0.5 rounded bg-emerald-600 text-white"
+                            >
+                              <Check className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingWeekTargetId(null)}
+                              className="p-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">
+                              {formatCurrency(target, isBangla)}
+                            </span>
+                            {isAdmin && onUpdateWeek && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingWeekTargetId(week.id);
+                                  setEditingWeekTargetVal(target);
+                                }}
+                                title={isBangla ? 'সাপ্তাহিক লক্ষ্যমাত্রা পরিবর্তন করুন' : 'Edit Weekly Target'}
+                                className="p-0.5 rounded text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-950/60"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-400 block">{t.collected}</span>
@@ -313,9 +427,21 @@ export const WeeklyCollectionView: React.FC<Props> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-400 block">{t.remaining}</span>
-                        <span className="font-bold text-amber-600 dark:text-amber-400 font-mono">
-                          {formatCurrency(remaining, isBangla)}
+                        <span className="text-[10px] text-slate-400 block">
+                          {upcoming ? (isBangla ? 'বকেয়া স্থিতি' : 'Due Status') : t.remaining}
+                        </span>
+                        <span
+                          className={`font-bold font-mono ${
+                            upcoming
+                              ? 'text-sky-600 dark:text-sky-400'
+                              : 'text-amber-600 dark:text-amber-400'
+                          }`}
+                        >
+                          {upcoming
+                            ? isBangla
+                              ? '৳০ (আসন্ন)'
+                              : '৳0 (Upcoming)'
+                            : formatCurrency(remaining, isBangla)}
                         </span>
                       </div>
                     </div>
@@ -342,10 +468,17 @@ export const WeeklyCollectionView: React.FC<Props> = ({
                           {formatNumber(partialCount, isBangla)}
                         </span>
                       )}
-                      <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
-                        <AlertCircle className="w-3.5 h-3.5" />
-                        {formatNumber(unpaidCount, isBangla)} {t.status_unpaid}
-                      </span>
+                      {upcoming ? (
+                        <span className="flex items-center gap-1 text-sky-600 dark:text-sky-400 font-semibold">
+                          <CalendarClock className="w-3.5 h-3.5" />
+                          {isBangla ? 'আসন্ন সপ্তাহ (বকেয়া নেই)' : 'Upcoming (0 Due)'}
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-1 text-rose-600 dark:text-rose-400">
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          {formatNumber(unpaidCount, isBangla)} {t.status_unpaid}
+                        </span>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-bold text-xs">
@@ -400,121 +533,263 @@ export const WeeklyCollectionView: React.FC<Props> = ({
           </div>
 
           {/* Active Month Status Banner */}
-          <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
-                <CalendarCheck2 className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
-                  {isBangla && activeMonth.titleBangla ? activeMonth.titleBangla : activeMonth.title}
-                </h3>
-                <p className="text-xs text-slate-500 dark:text-slate-400">
-                  {isBangla ? 'সদস্যদের নির্ধারিত মাসিক ফি ও আদায় স্থিতি' : 'Monthly contributions and payment records'}
-                </p>
-              </div>
-            </div>
-
-            {isAdmin && onDeleteMonth && months.length > 1 && (
-              <button
-                onClick={() => {
-                  if (confirm(isBangla ? `আপনি কি "${activeMonth.title}" মুছে ফেলতে চান?` : `Delete month "${activeMonth.title}"?`)) {
-                    onDeleteMonth(activeMonth.id);
-                  }
-                }}
-                className="self-end sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 transition-all"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-                <span>{isBangla ? 'মাস মুছুন' : 'Delete Month'}</span>
-              </button>
-            )}
-          </div>
-
-          {/* Monthly Members Payments Table */}
-          <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
-            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-900 dark:text-white">
-                {isBangla ? 'মাসিক চাঁদা প্রদান তালিকা' : 'Monthly Dues Register'}
-              </span>
-              <span className="text-xs text-slate-400">
-                {isBangla ? 'সদস্যের উপর ক্লিক করে পেমেন্ট আপডেট করুন' : 'Click row to update payment'}
-              </span>
-            </div>
-
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {members.map((member) => {
-                const p = monthlyPayments.find(
-                  (mp) => mp.monthId === activeMonth.id && mp.memberId === member.id
-                ) || {
-                  id: `mp-${activeMonth.id}-${member.id}`,
-                  seasonId: season.id,
-                  monthId: activeMonth.id,
-                  memberId: member.id,
-                  expectedAmount: member.monthlyAmount || 1400,
-                  paidAmount: 0,
-                  status: 'UNPAID' as const,
-                  paymentDate: '',
-                  paymentMethod: 'bKash',
-                };
-
-                const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
-                const due = Math.max(p.expectedAmount - p.paidAmount, 0);
-
-                return (
-                  <div
-                    key={member.id}
-                    onClick={() => isAdmin && onOpenMonthlyPaymentModal(p, activeMonth, member)}
-                    className={`p-3.5 flex items-center justify-between gap-3 transition-colors ${
-                      isAdmin ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60' : ''
-                    }`}
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center">
-                        {memberName.charAt(0)}
-                      </div>
-                      <div className="truncate">
-                        <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
-                          {memberName}
-                        </h4>
-                        <span className="text-[11px] text-slate-400">
-                          {member.phone}
-                        </span>
-                      </div>
+          {(() => {
+            const activeMonthUpcoming = isMonthUpcoming(activeMonth);
+            return (
+              <>
+                <div className="p-4 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
+                      <CalendarCheck2 className="w-5 h-5" />
                     </div>
-
-                    <div className="flex items-center gap-4 text-right">
-                      <div>
-                        <span className="text-xs font-black text-slate-900 dark:text-white block">
-                          {formatCurrency(p.paidAmount, isBangla)}
-                        </span>
-                        <span className="text-[10px] text-slate-400 block">
-                          {isBangla ? 'ফি:' : 'Fee:'} {formatCurrency(p.expectedAmount, isBangla)}
-                        </span>
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-base font-extrabold text-slate-900 dark:text-white">
+                          {isBangla && activeMonth.titleBangla ? activeMonth.titleBangla : activeMonth.title}
+                        </h3>
+                        {activeMonthUpcoming && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+                            🗓️ {isBangla ? 'আসন্ন মাস (বকেয়া নয়)' : 'Upcoming Month (No Due)'}
+                          </span>
+                        )}
                       </div>
-
-                      <div className="min-w-[70px] text-right">
-                        {p.status === 'PAID' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                            {t.status_paid}
-                          </span>
+                      <div className="flex items-center gap-2 text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        <span>
+                          {isBangla ? 'মাসিক লক্ষ্যমাত্রা:' : 'Monthly Target:'}{' '}
+                          <strong className="text-slate-700 dark:text-slate-200">
+                            {formatCurrency(activeMonth.targetAmount || 16800, isBangla)}
+                          </strong>
+                        </span>
+                        {isAdmin && onUpdateMonth && !editingMonthTarget && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMonthTarget(true);
+                              setEditingMonthTargetVal(activeMonth.targetAmount || 16800);
+                            }}
+                            className="p-0.5 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/60"
+                            title={isBangla ? 'লক্ষ্যমাত্রা পরিবর্তন করুন' : 'Edit Monthly Target'}
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
                         )}
-                        {p.status === 'PARTIAL' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
-                            {t.status_partial}
-                          </span>
-                        )}
-                        {p.status === 'UNPAID' && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
-                            {t.status_unpaid}
-                          </span>
+                        {isAdmin && onUpdateMonth && editingMonthTarget && (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              value={editingMonthTargetVal}
+                              onChange={(e) => setEditingMonthTargetVal(Number(e.target.value))}
+                              className="w-20 px-2 py-0.5 text-xs font-bold rounded border border-emerald-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onUpdateMonth({
+                                  ...activeMonth,
+                                  targetAmount: Math.max(0, Math.round(Number(editingMonthTargetVal) || 0)),
+                                });
+                                setEditingMonthTarget(false);
+                              }}
+                              className="p-1 rounded bg-emerald-600 text-white"
+                            >
+                              <Check className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingMonthTarget(false)}
+                              className="p-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
+                    {isAdmin && onUpdateMonth && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onUpdateMonth({
+                            ...activeMonth,
+                            isUpcoming: !activeMonthUpcoming,
+                          })
+                        }
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border transition-all ${
+                          activeMonthUpcoming
+                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-500'
+                            : 'bg-sky-50 dark:bg-sky-950/50 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800 hover:bg-sky-100'
+                        }`}
+                      >
+                        <CalendarClock className="w-3.5 h-3.5" />
+                        <span>
+                          {activeMonthUpcoming
+                            ? isBangla
+                              ? 'মাসটি চালু করুন (চলতি)'
+                              : 'Activate Month'
+                            : isBangla
+                            ? 'আসন্ন মাস করুন'
+                            : 'Mark Upcoming'}
+                        </span>
+                      </button>
+                    )}
+
+                    {isAdmin && onDeleteMonth && months.length > 1 && (
+                      <button
+                        onClick={() => {
+                          if (confirm(isBangla ? `আপনি কি "${activeMonth.title}" মুছে ফেলতে চান?` : `Delete month "${activeMonth.title}"?`)) {
+                            onDeleteMonth(activeMonth.id);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900 transition-all"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>{isBangla ? 'মাস মুছুন' : 'Delete Month'}</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Monthly Members Payments Table */}
+                <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-sm overflow-hidden">
+                  <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                    <span className="text-xs font-bold text-slate-900 dark:text-white">
+                      {isBangla ? 'মাসিক চাঁদা প্রদান তালিকা' : 'Monthly Dues Register'}
+                    </span>
+                    <span className="text-xs text-slate-400">
+                      {isBangla ? 'সদস্যের উপর ক্লিক করে পেমেন্ট বা নির্ধারিত ফি আপডেট করুন' : 'Click row to update payment or determined fee'}
+                    </span>
+                  </div>
+
+                  <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {members.map((member) => {
+                      const isWeeklyOnly =
+                        member.participatesInSports === false ||
+                        member.contributionType === 'weekly';
+                      const rawP = monthlyPayments.find(
+                        (mp) => mp.monthId === activeMonth.id && mp.memberId === member.id
+                      ) || {
+                        id: `mp-${activeMonth.id}-${member.id}`,
+                        seasonId: season.id,
+                        monthId: activeMonth.id,
+                        memberId: member.id,
+                        expectedAmount: isWeeklyOnly ? 0 : member.monthlyAmount || 1400,
+                        paidAmount: 0,
+                        status: 'UNPAID' as const,
+                        paymentDate: '',
+                        paymentMethod: 'bKash',
+                      };
+                      const p =
+                        isWeeklyOnly && rawP.paidAmount === 0
+                          ? { ...rawP, expectedAmount: 0 }
+                          : rawP;
+
+                      const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
+                      const isUnpaidUpcomingMonth = activeMonthUpcoming && p.paidAmount === 0;
+
+                      return (
+                        <div
+                          key={member.id}
+                          onClick={() => isAdmin && onOpenMonthlyPaymentModal(p, activeMonth, member)}
+                          className={`p-3.5 flex items-center justify-between gap-3 transition-colors ${
+                            isAdmin ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/60' : ''
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center justify-center">
+                              {memberName.charAt(0)}
+                            </div>
+                            <div className="truncate">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                  {memberName}
+                                </h4>
+                                <span className="text-[10px] font-mono font-bold px-1.5 py-0.2 rounded bg-emerald-600 text-white">
+                                  #{member.memberCode}
+                                </span>
+                                <span
+                                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
+                                    member.contributionType === 'monthly'
+                                      ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300'
+                                      : member.contributionType === 'both'
+                                      ? 'bg-teal-100 dark:bg-teal-950 text-teal-700 dark:text-teal-300'
+                                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                                  }`}
+                                >
+                                  {member.contributionType === 'monthly'
+                                    ? isBangla
+                                      ? '🗓️ শুধু মাসিক'
+                                      : '🗓️ Monthly'
+                                    : member.contributionType === 'both'
+                                    ? isBangla
+                                      ? '🔄 সাপ্তাহিক+মাসিক'
+                                      : '🔄 Both'
+                                    : isBangla
+                                    ? '📅 শুধু সাপ্তাহিক'
+                                    : '📅 Weekly Only'}
+                                </span>
+                              </div>
+                              <span className="text-[11px] text-slate-400">
+                                {member.phone}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-right">
+                            <div>
+                              <span className="text-xs font-black text-slate-900 dark:text-white block">
+                                {formatCurrency(p.paidAmount, isBangla)}
+                              </span>
+                              <span className="text-[10px] text-slate-400 flex items-center justify-end gap-1">
+                                <span>
+                                  {isBangla ? 'নির্ধারিত ফি:' : 'Fee:'} {formatCurrency(p.expectedAmount, isBangla)}
+                                </span>
+                                {isAdmin && <Edit2 className="w-2.5 h-2.5 text-indigo-500" />}
+                              </span>
+                            </div>
+
+                            <div className="min-w-[85px] text-right">
+                              {isWeeklyOnly && p.paidAmount === 0 ? (
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400">
+                                  {isBangla ? '📅 সাপ্তাহিক সদস্য' : '📅 Weekly Plan'}
+                                </span>
+                              ) : (
+                                <>
+                                  {p.status === 'PAID' && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
+                                      {t.status_paid}
+                                    </span>
+                                  )}
+                                  {p.status === 'PARTIAL' && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
+                                      {t.status_partial}
+                                    </span>
+                                  )}
+                                  {p.status === 'UNPAID' && isUnpaidUpcomingMonth && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-sky-100 dark:bg-sky-950 text-sky-700 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+                                      🗓️ {isBangla ? 'আসন্ন' : 'Upcoming'}
+                                    </span>
+                                  )}
+                                  {p.status === 'UNPAID' && !isUnpaidUpcomingMonth && (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300">
+                                      {t.status_unpaid}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            );
+          })()}
         </div>
       )}
 

@@ -15,6 +15,7 @@ import { formatCurrency, formatNumber, Language, translations } from '../utils/l
 import { SPORTS_MAP } from '../utils/sports';
 import { StatusBadge } from './StatusBadge';
 import { processImageFile } from '../utils/imageUtils';
+import { getCategoryDefaultWeeklyFee, isWeekUpcoming } from '../utils/accounting';
 import {
   X,
   User,
@@ -83,6 +84,12 @@ export const MemberProfileModal: React.FC<Props> = ({
   const [tempPin, setTempPin] = useState(member.subAdminPin || '');
   const [tempRole, setTempRole] = useState<Role>(member.role || 'Member');
 
+  const [isEditingFees, setIsEditingFees] = useState(false);
+  const [tempWeeklyFee, setTempWeeklyFee] = useState<number>(member.weeklyAmount || 0);
+  const [tempMonthlyFee, setTempMonthlyFee] = useState<number>(member.monthlyAmount || 0);
+  const [tempEmail, setTempEmail] = useState<string>(member.email || '');
+  const [feeSavedMsg, setFeeSavedMsg] = useState(false);
+
   const togglePermission = (perm: DelegatedPermission) => {
     setTempPermissions((prev) =>
       prev.includes(perm) ? prev.filter((p) => p !== perm) : [...prev, perm]
@@ -104,22 +111,35 @@ export const MemberProfileModal: React.FC<Props> = ({
     }
   };
 
+  const weekMap = new Map<string, Week>();
+  weeks.forEach((w) => weekMap.set(w.id, w));
+
   // Filter all payments belonging to this member across all weeks
   const isPatronOnly = member.participatesInSports === false;
+  const isMonthlyOnly = member.contributionType === 'monthly';
   const memberPayments = payments
     .filter((p) => p.memberId === member.id)
     .map((p) =>
-      isPatronOnly && (p.paidAmount || 0) === 0 ? { ...p, expectedAmount: 0 } : p
+      (isPatronOnly || isMonthlyOnly) && (p.paidAmount || 0) === 0
+        ? { ...p, expectedAmount: 0 }
+        : p
     );
 
   const totalPaid = memberPayments.reduce((acc, p) => acc + p.paidAmount, 0);
-  const totalExpected = memberPayments.reduce((acc, p) => acc + p.expectedAmount, 0);
-  const currentDue = Math.max(totalExpected - totalPaid, 0);
+  const currentDue = memberPayments.reduce((acc, p) => {
+    const w = weekMap.get(p.weekId);
+    if (isWeekUpcoming(w) && (p.paidAmount || 0) === 0) {
+      return acc;
+    }
+    return acc + Math.max(0, (p.expectedAmount || 0) - (p.paidAmount || 0));
+  }, 0);
 
   const paidWeeksCount = memberPayments.filter((p) => p.status === 'PAID').length;
-  const missedWeeksCount = memberPayments.filter(
-    (p) => p.status === 'UNPAID' && p.expectedAmount > 0
-  ).length;
+  const missedWeeksCount = memberPayments.filter((p) => {
+    const w = weekMap.get(p.weekId);
+    if (isWeekUpcoming(w) && (p.paidAmount || 0) === 0) return false;
+    return p.status === 'UNPAID' && p.expectedAmount > 0;
+  }).length;
 
   // Member's savings deposits
   const memberSavings = savingsDeposits.filter((d) => d.memberId === member.id);
@@ -250,12 +270,18 @@ export const MemberProfileModal: React.FC<Props> = ({
                     <button
                       key={cat.id}
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        const newCatFee =
+                          member.participatesInSports === false
+                            ? 0
+                            : getCategoryDefaultWeeklyFee(cat.id as any);
+                        setTempWeeklyFee(newCatFee);
                         onUpdateMember({
                           ...member,
                           memberCategory: cat.id as any,
-                        })
-                      }
+                          weeklyAmount: newCatFee,
+                        });
+                      }}
                       className={`py-1.5 px-2 rounded-xl text-xs font-bold border transition-all ${
                         isSelected
                           ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 shadow-sm'
@@ -271,13 +297,18 @@ export const MemberProfileModal: React.FC<Props> = ({
               {/* Sports Participation Toggle */}
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const nextParticipates = member.participatesInSports === false ? true : false;
+                  const nextFee = nextParticipates
+                    ? getCategoryDefaultWeeklyFee(member.memberCategory)
+                    : 0;
+                  setTempWeeklyFee(nextFee);
                   onUpdateMember({
                     ...member,
-                    participatesInSports: member.participatesInSports === false ? true : false,
-                    weeklyAmount: member.participatesInSports === false ? 50 : 0,
-                  })
-                }
+                    participatesInSports: nextParticipates,
+                    weeklyAmount: nextFee,
+                  });
+                }}
                 className={`w-full py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-between border transition-all ${
                   member.participatesInSports !== false
                     ? 'border-emerald-200 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-200'
@@ -293,6 +324,67 @@ export const MemberProfileModal: React.FC<Props> = ({
                   {isBangla ? 'পরিবর্তন করুন' : 'Change'}
                 </span>
               </button>
+
+              {/* Contribution Type Selector (Weekly vs Monthly vs Both) */}
+              {member.participatesInSports !== false && (
+                <div className="pt-1 space-y-1.5">
+                  <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 block">
+                    {isBangla
+                      ? '📅 চাঁদার ধরন পরিবর্তন করুন (সাপ্তাহিক নাকি মাসিক):'
+                      : '📅 Contribution Plan (Weekly vs Monthly):'}
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {[
+                      {
+                        id: 'weekly' as const,
+                        label: isBangla ? '📅 শুধু সাপ্তাহিক' : '📅 Weekly Only',
+                      },
+                      {
+                        id: 'monthly' as const,
+                        label: isBangla ? '🗓️ শুধু মাসিক' : '🗓️ Monthly Only',
+                      },
+                      {
+                        id: 'both' as const,
+                        label: isBangla ? '🔄 উভয়ই (সাপ্তাহিক+মাসিক)' : '🔄 Both Plans',
+                      },
+                    ].map((plan) => {
+                      const activePlan = member.contributionType || 'weekly';
+                      const isPlanSelected = activePlan === plan.id;
+                      return (
+                        <button
+                          key={plan.id}
+                          type="button"
+                          onClick={() => {
+                            const restoredWeekly =
+                              plan.id === 'monthly'
+                                ? member.weeklyAmount
+                                : member.weeklyAmount > 0
+                                ? member.weeklyAmount
+                                : getCategoryDefaultWeeklyFee(member.memberCategory);
+                            const restoredMonthly =
+                              member.monthlyAmount && member.monthlyAmount > 0
+                                ? member.monthlyAmount
+                                : restoredWeekly * 4 || 1400;
+                            onUpdateMember({
+                              ...member,
+                              contributionType: plan.id,
+                              weeklyAmount: restoredWeekly,
+                              monthlyAmount: restoredMonthly,
+                            });
+                          }}
+                          className={`py-1.5 px-2 rounded-xl text-[11px] font-extrabold border transition-all ${
+                            isPlanSelected
+                              ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-200 shadow-xs'
+                              : 'border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300'
+                          }`}
+                        >
+                          {plan.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -478,35 +570,169 @@ export const MemberProfileModal: React.FC<Props> = ({
             </div>
           </div>
 
-          {/* Member Sports & Contribution Profile Card */}
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <span className="text-2xl">{sportMeta.emoji}</span>
-              <div>
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
-                  {isBangla ? sportMeta.nameBangla : sportMeta.name} {isBangla ? 'খেলোয়াড়' : 'Player'}
-                </span>
-                <span className="text-[11px] text-slate-400">
-                  {isBangla ? 'চাঁদা চাঁদার ধরন: ' : 'Plan: '}
-                  {member.contributionType === 'monthly'
-                    ? (isBangla ? 'মাসিক' : 'Monthly')
-                    : member.contributionType === 'both'
-                    ? (isBangla ? 'সাপ্তাহিক ও মাসিক সঞ্চয়' : 'Weekly & Monthly')
-                    : (isBangla ? 'সাপ্তাহিক' : 'Weekly')}
-                </span>
+          {/* Member Sports & Determined Fee Profile Card (With Direct Admin Edit) */}
+          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="text-2xl">{sportMeta.emoji}</span>
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-slate-200 block">
+                    {isBangla ? sportMeta.nameBangla : sportMeta.name} {isBangla ? 'খেলোয়াড়' : 'Player'}
+                  </span>
+                  <span className="text-[11px] text-slate-400">
+                    {isBangla ? 'চাঁদার ধরন: ' : 'Plan: '}
+                    {member.contributionType === 'monthly'
+                      ? (isBangla ? 'মাসিক' : 'Monthly')
+                      : member.contributionType === 'both'
+                      ? (isBangla ? 'সাপ্তাহিক ও মাসিক সঞ্চয়' : 'Weekly & Monthly')
+                      : (isBangla ? 'সাপ্তাহিক' : 'Weekly')}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="text-right text-xs">
+                  <span className="font-bold text-slate-700 dark:text-slate-300 block">
+                    {formatCurrency(member.weeklyAmount, isBangla)} / {isBangla ? 'সপ্তাহ' : 'wk'}
+                  </span>
+                  {member.monthlyAmount && member.monthlyAmount > 0 ? (
+                    <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
+                      {formatCurrency(member.monthlyAmount, isBangla)} / {isBangla ? 'মাস' : 'mo'}
+                    </span>
+                  ) : null}
+                </div>
+
+                {isAdmin && onUpdateMember && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTempWeeklyFee(member.weeklyAmount || 0);
+                      setTempMonthlyFee(member.monthlyAmount || 0);
+                      setIsEditingFees(!isEditingFees);
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold flex items-center gap-1 shadow-sm transition-all"
+                  >
+                    <Edit2 className="w-3 h-3" />
+                    <span>{isBangla ? 'নির্ধারিত ফি পরিবর্তন' : 'Edit Fee'}</span>
+                  </button>
+                )}
               </div>
             </div>
 
-            <div className="text-right text-xs">
-              <span className="font-bold text-slate-700 dark:text-slate-300 block">
-                {formatCurrency(member.weeklyAmount, isBangla)} / {isBangla ? 'সপ্তাহ' : 'wk'}
-              </span>
-              {member.monthlyAmount && member.monthlyAmount > 0 ? (
-                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold block">
-                  {formatCurrency(member.monthlyAmount, isBangla)} / {isBangla ? 'মাস' : 'mo'}
-                </span>
-              ) : null}
-            </div>
+            {feeSavedMsg && (
+              <div className="px-3 py-1.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{isBangla ? 'সদস্যের নির্ধারিত ফি সফলভাবে আপডেট হয়েছে!' : 'Member determined fee updated!'}</span>
+              </div>
+            )}
+
+            {isAdmin && isEditingFees && onUpdateMember && (
+              <div className="pt-2.5 border-t border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      {isBangla ? 'নির্ধারিত সাপ্তাহিক ফি (৳)' : 'Determined Weekly Fee (৳)'}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={tempWeeklyFee}
+                      onChange={(e) => setTempWeeklyFee(Math.max(0, Number(e.target.value)))}
+                      className="w-full px-3 py-2 rounded-xl border border-emerald-400 dark:border-emerald-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {[0, 100, 150, 200, 250, 300, 350, 500].map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setTempWeeklyFee(val)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            tempWeeklyFee === val
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          ৳{val}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      {isBangla ? 'নির্ধারিত মাসিক ফি (৳)' : 'Determined Monthly Fee (৳)'}
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={tempMonthlyFee}
+                      onChange={(e) => setTempMonthlyFee(Math.max(0, Number(e.target.value)))}
+                      className="w-full px-3 py-2 rounded-xl border border-indigo-400 dark:border-indigo-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-sm focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {[0, 300, 500, 800, 1000, 1400, 1500].map((val) => (
+                        <button
+                          key={val}
+                          type="button"
+                          onClick={() => setTempMonthlyFee(val)}
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            tempMonthlyFee === val
+                              ? 'bg-indigo-600 text-white'
+                              : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                          }`}
+                        >
+                          ৳{val}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                      {isBangla
+                        ? '✉️ সদস্যের ইমেইল ঠিকানা (অটো রসিদ ও রিমাইন্ডারের জন্য)'
+                        : '✉️ Member Email Address (For Auto Receipts & Reminders)'}
+                    </label>
+                    <input
+                      type="email"
+                      value={tempEmail}
+                      onChange={(e) => setTempEmail(e.target.value)}
+                      placeholder="member@gmail.com"
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingFees(false)}
+                    className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 text-xs font-bold"
+                  >
+                    {isBangla ? 'বাতিল' : 'Cancel'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cleanWeekly = Math.max(0, Math.round(Number(tempWeeklyFee) || 0));
+                      const cleanMonthly = Math.max(0, Math.round(Number(tempMonthlyFee) || 0));
+                      onUpdateMember({
+                        ...member,
+                        weeklyAmount: cleanWeekly,
+                        monthlyAmount: cleanMonthly,
+                        email: tempEmail.trim() || undefined,
+                        participatesInSports: cleanWeekly > 0 ? true : member.participatesInSports,
+                      });
+                      setIsEditingFees(false);
+                      setFeeSavedMsg(true);
+                      setTimeout(() => setFeeSavedMsg(false), 3000);
+                    }}
+                    className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow"
+                  >
+                    {isBangla ? '✓ নির্ধারিত ফি ও ইমেইল সেভ করুন' : '✓ Save Fees & Email'}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Personal Sonsoy / Savings Fund Card */}
@@ -635,6 +861,8 @@ export const MemberProfileModal: React.FC<Props> = ({
                       ? week.titleBangla
                       : week.title
                     : `Week ${pay.weekId}`;
+                  const weekIsUpcoming = isWeekUpcoming(week);
+                  const isUnpaidUpcoming = weekIsUpcoming && (pay.paidAmount || 0) === 0;
 
                   return (
                     <div
@@ -646,7 +874,15 @@ export const MemberProfileModal: React.FC<Props> = ({
                           {weekTitle}
                         </span>
                         <span className="text-[11px] text-slate-400">
-                          {pay.paymentDate || 'Pending'} • {pay.paymentMethod}
+                          {pay.paymentDate
+                            ? `${pay.paymentDate} • ${pay.paymentMethod}`
+                            : isUnpaidUpcoming
+                            ? isBangla
+                              ? 'আসন্ন সপ্তাহ (বকেয়া নয়)'
+                              : 'Upcoming Week (Not Due)'
+                            : isBangla
+                            ? 'এখনো পরিশোধ হয়নি'
+                            : 'Pending'}
                         </span>
                       </div>
 
@@ -655,14 +891,24 @@ export const MemberProfileModal: React.FC<Props> = ({
                           <span className="font-extrabold font-mono text-slate-900 dark:text-white block">
                             {formatCurrency(pay.paidAmount, isBangla)}
                           </span>
-                          {pay.expectedAmount > pay.paidAmount && (
+                          {!isUnpaidUpcoming && pay.expectedAmount > pay.paidAmount && (
                             <span className="text-[10px] text-rose-500 font-semibold block">
                               {t.due_amount}: {formatCurrency(pay.expectedAmount - pay.paidAmount, isBangla)}
                             </span>
                           )}
+                          {isUnpaidUpcoming && (
+                            <span className="text-[10px] text-sky-600 dark:text-sky-400 font-semibold block">
+                              {isBangla ? `নির্ধারিত: ${formatCurrency(pay.expectedAmount, true)}` : `Scheduled: ${formatCurrency(pay.expectedAmount, false)}`}
+                            </span>
+                          )}
                         </div>
 
-                        <StatusBadge status={pay.status} lang={lang} size="sm" />
+                        <StatusBadge
+                          status={pay.status}
+                          lang={lang}
+                          size="sm"
+                          isUpcoming={isUnpaidUpcoming}
+                        />
 
                         {isAdmin && onEditPayment && (
                           <button

@@ -8,6 +8,7 @@ import {
   FundCategory,
 } from '../types';
 import { Language, translations, formatCurrency, formatNumber, formatDate } from '../utils/language';
+import { applyPaymentCorrection } from '../utils/accounting';
 import {
   HeartHandshake,
   PlusCircle,
@@ -85,9 +86,13 @@ export const FundsView: React.FC<Props> = ({
 
   // Form states - Collect Payment
   const [payMemberId, setPayMemberId] = useState('');
+  const [payExpectedAmount, setPayExpectedAmount] = useState<number | ''>(500);
   const [payAmount, setPayAmount] = useState<number | ''>('');
   const [payMethod, setPayMethod] = useState<'bKash' | 'Nagad' | 'Cash' | 'Bank'>('bKash');
   const [payNotes, setPayNotes] = useState('');
+  const [editingFundFeeId, setEditingFundFeeId] = useState<string | null>(null);
+  const [editingFundDefaultVal, setEditingFundDefaultVal] = useState<number>(500);
+  const [editingFundTargetVal, setEditingFundTargetVal] = useState<number>(10000);
 
   // Form states - Disburse
   const [disburseTitle, setDisburseTitle] = useState('');
@@ -281,10 +286,13 @@ export const FundsView: React.FC<Props> = ({
       setTargetMemberForPay(member);
       setPayMemberId(member.id);
       const existing = contributions.find((c) => c.fundId === fund.id && c.memberId === member.id);
-      setPayAmount(existing ? existing.paidAmount : (fund.defaultTargetPerMember || 500));
+      const exp = existing ? existing.expectedAmount : (fund.defaultTargetPerMember || 500);
+      setPayExpectedAmount(exp);
+      setPayAmount(existing ? existing.paidAmount : exp);
     } else {
       setTargetMemberForPay(null);
       setPayMemberId('');
+      setPayExpectedAmount(fund.defaultTargetPerMember || 500);
       setPayAmount(fund.defaultTargetPerMember || 500);
     }
     setPayMethod('bKash');
@@ -298,13 +306,15 @@ export const FundsView: React.FC<Props> = ({
     );
     if (existingIndex < 0) return;
     const existing = contributions[existingIndex];
-    const newStatus: PaymentStatus =
-      newPaidAmount >= existing.expectedAmount ? 'PAID' : newPaidAmount > 0 ? 'PARTIAL' : 'UNPAID';
+    const corrected = applyPaymentCorrection(existing, {
+      paidAmount: newPaidAmount,
+      actorRole: 'MASTER_ADMIN',
+      actorName: 'Admin',
+      reason: newPaidAmount === 0 ? 'Marked unpaid via quick toggle' : 'Marked paid via quick toggle',
+    });
     const updatedContribs = [...contributions];
     updatedContribs[existingIndex] = {
-      ...existing,
-      paidAmount: newPaidAmount,
-      status: newStatus,
+      ...corrected,
       date: newPaidAmount > 0 ? formatDate() : '',
     };
     onSaveContributions(updatedContribs);
@@ -315,6 +325,11 @@ export const FundsView: React.FC<Props> = ({
     if (!activeFundForAction || !payMemberId || payAmount === '' || Number(payAmount) < 0) return;
 
     const amount = Number(payAmount);
+    const cleanExpected =
+      payExpectedAmount === ''
+        ? activeFundForAction.defaultTargetPerMember || 500
+        : Math.max(0, Math.round(Number(payExpectedAmount) || 0));
+
     const existingIndex = contributions.findIndex(
       (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
     );
@@ -322,21 +337,25 @@ export const FundsView: React.FC<Props> = ({
     const updatedContribs = [...contributions];
     if (existingIndex >= 0) {
       const existing = updatedContribs[existingIndex];
-      const newPaid = amount;
-      const newStatus: PaymentStatus =
-        newPaid >= existing.expectedAmount ? 'PAID' : newPaid > 0 ? 'PARTIAL' : 'UNPAID';
+      const corrected = applyPaymentCorrection(existing, {
+        paidAmount: amount,
+        expectedAmount: cleanExpected,
+        method: payMethod,
+        actorRole: 'MASTER_ADMIN',
+        actorName: 'Admin',
+        reason: payNotes.trim() || 'Fund contribution updated',
+      });
 
       updatedContribs[existingIndex] = {
-        ...existing,
-        paidAmount: newPaid,
-        status: newStatus,
-        date: newPaid > 0 ? formatDate() : '',
+        ...corrected,
+        expectedAmount: cleanExpected,
+        date: amount > 0 ? formatDate() : '',
         paymentMethod: payMethod,
         notes: payNotes.trim() || existing.notes,
       };
     } else {
       // New contribution record
-      const expected = activeFundForAction.defaultTargetPerMember || amount || 500;
+      const expected = cleanExpected;
       const status: PaymentStatus = amount >= expected ? 'PAID' : amount > 0 ? 'PARTIAL' : 'UNPAID';
       updatedContribs.push({
         id: `fc-${Date.now()}-${payMemberId}`,
@@ -645,11 +664,90 @@ export const FundsView: React.FC<Props> = ({
                             {fund.description}
                           </p>
                         )}
-                        <span className="text-[11px] text-slate-400 mt-1 block">
-                          {isBangla ? 'শুরুর তারিখ: ' : 'Created: '}
-                          {fund.createdDate} • {isBangla ? 'টার্গেট/সদস্য: ' : 'Target/Member: '}
-                          {formatCurrency(fund.defaultTargetPerMember || 0, isBangla)}
-                        </span>
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400 mt-1">
+                          <span>
+                            {isBangla ? 'শুরুর তারিখ: ' : 'Created: '}
+                            {fund.createdDate} • {isBangla ? 'নির্ধারিত চাঁদা/সদস্য: ' : 'Fee/Member: '}
+                            <strong className="text-slate-700 dark:text-slate-200">
+                              {formatCurrency(fund.defaultTargetPerMember || 0, isBangla)}
+                            </strong>
+                          </span>
+                          {isAdmin && editingFundFeeId !== fund.id && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingFundFeeId(fund.id);
+                                setEditingFundDefaultVal(fund.defaultTargetPerMember || 500);
+                                setEditingFundTargetVal(fund.targetAmount || 10000);
+                              }}
+                              className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 font-bold text-[10px] hover:bg-indigo-100"
+                            >
+                              ✎ {isBangla ? 'নির্ধারিত ফি পরিবর্তন' : 'Edit Fund Fee'}
+                            </button>
+                          )}
+                        </div>
+                        {isAdmin && editingFundFeeId === fund.id && (
+                          <div className="mt-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-indigo-200 dark:border-indigo-800 flex flex-wrap items-center gap-2 text-xs">
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500">
+                                {isBangla ? 'সদস্য প্রতি নির্ধারিত ফি (৳)' : 'Default Member Fee (৳)'}
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={editingFundDefaultVal}
+                                onChange={(e) => setEditingFundDefaultVal(Number(e.target.value))}
+                                className="w-24 px-2 py-1 rounded border border-indigo-400 bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-white"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[10px] font-bold text-slate-500">
+                                {isBangla ? 'মোট লক্ষ্যমাত্রা (৳)' : 'Total Target (৳)'}
+                              </label>
+                              <input
+                                type="number"
+                                min="0"
+                                value={editingFundTargetVal}
+                                onChange={(e) => setEditingFundTargetVal(Number(e.target.value))}
+                                className="w-28 px-2 py-1 rounded border border-indigo-400 bg-white dark:bg-slate-900 font-bold text-slate-900 dark:text-white"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1.5 pt-3">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const cleanDef = Math.max(0, Math.round(Number(editingFundDefaultVal) || 0));
+                                  const cleanTarget = Math.max(0, Math.round(Number(editingFundTargetVal) || 0));
+                                  onSaveFunds(
+                                    funds.map((f) =>
+                                      f.id === fund.id
+                                        ? { ...f, defaultTargetPerMember: cleanDef, targetAmount: cleanTarget }
+                                        : f
+                                    )
+                                  );
+                                  onSaveContributions(
+                                    contributions.map((c) =>
+                                      c.fundId === fund.id && c.paidAmount === 0
+                                        ? { ...c, expectedAmount: cleanDef }
+                                        : c
+                                    )
+                                  );
+                                  setEditingFundFeeId(null);
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-bold text-xs"
+                              >
+                                {isBangla ? '✓ সেভ' : '✓ Save'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingFundFeeId(null)}
+                                className="px-2 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold text-xs"
+                              >
+                                {isBangla ? 'বাতিল' : 'Cancel'}
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
 
@@ -1214,7 +1312,18 @@ export const FundsView: React.FC<Props> = ({
                 <select
                   required
                   value={payMemberId}
-                  onChange={(e) => setPayMemberId(e.target.value)}
+                  onChange={(e) => {
+                    const mId = e.target.value;
+                    setPayMemberId(mId);
+                    const existing = contributions.find(
+                      (c) => c.fundId === activeFundForAction.id && c.memberId === mId
+                    );
+                    const exp = existing
+                      ? existing.expectedAmount
+                      : activeFundForAction.defaultTargetPerMember || 500;
+                    setPayExpectedAmount(exp);
+                    setPayAmount(existing && existing.paidAmount > 0 ? existing.paidAmount : exp);
+                  }}
                   className="w-full px-3 py-2 text-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 >
                   <option value="">{isBangla ? '-- সদস্য নির্বাচন করুন --' : '-- Select Member --'}</option>
@@ -1229,6 +1338,26 @@ export const FundsView: React.FC<Props> = ({
               </div>
 
               <div>
+                <label className="block text-xs font-bold text-indigo-700 dark:text-indigo-300 mb-1">
+                  {isBangla ? 'নির্ধারিত চাঁদা / টার্গেট পরিমাণ (৳)' : 'Determined / Expected Fee (৳)'}
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={payExpectedAmount}
+                  onChange={(e) => {
+                    const nextExp = e.target.value === '' ? '' : Number(e.target.value);
+                    if (payAmount === payExpectedAmount && nextExp !== '') {
+                      setPayAmount(nextExp);
+                    }
+                    setPayExpectedAmount(nextExp);
+                  }}
+                  placeholder="500"
+                  className="w-full px-3 py-2 text-sm font-bold rounded-xl border border-indigo-300 dark:border-indigo-700 bg-indigo-50/40 dark:bg-indigo-950/30 text-indigo-900 dark:text-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
                   {isBangla ? 'মোট পরিশোধিত পরিমাণ (৳)' : 'Total Paid Amount (৳)'} *
                 </label>
@@ -1236,10 +1365,11 @@ export const FundsView: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const existing = contributions.find(
-                        (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
-                      );
-                      setPayAmount(existing ? existing.expectedAmount : (activeFundForAction.defaultTargetPerMember || 500));
+                      const exp =
+                        payExpectedAmount !== ''
+                          ? Number(payExpectedAmount)
+                          : activeFundForAction.defaultTargetPerMember || 500;
+                      setPayAmount(exp);
                     }}
                     className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
                   >
@@ -1248,10 +1378,10 @@ export const FundsView: React.FC<Props> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      const existing = contributions.find(
-                        (c) => c.fundId === activeFundForAction.id && c.memberId === payMemberId
-                      );
-                      const exp = existing ? existing.expectedAmount : (activeFundForAction.defaultTargetPerMember || 500);
+                      const exp =
+                        payExpectedAmount !== ''
+                          ? Number(payExpectedAmount)
+                          : activeFundForAction.defaultTargetPerMember || 500;
                       setPayAmount(Math.round(exp / 2));
                     }}
                     className="py-1.5 px-2 rounded-lg text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800"

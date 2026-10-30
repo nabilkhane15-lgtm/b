@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Member, Payment, Week, PaymentStatus } from '../types';
 import { translations, Language, formatCurrency, formatNumber } from '../utils/language';
 import { StatusBadge } from '../components/StatusBadge';
+import { isWeekUpcoming } from '../utils/accounting';
 import {
   Search,
   Plus,
@@ -15,6 +16,10 @@ import {
   Send,
   ArrowUpDown,
   Trash2,
+  CalendarClock,
+  Check,
+  X,
+  Mail,
 } from 'lucide-react';
 
 interface Props {
@@ -38,6 +43,9 @@ interface Props {
   onDeleteMember?: (memberId: string) => void;
   onOpenIdSearch?: () => void;
   onOpenSignUp?: () => void;
+  onUpdateMember?: (member: Member) => void;
+  onToggleWeekUpcoming?: (weekId: string, isUpcoming: boolean) => void;
+  onOpenEmailDashboard?: () => void;
 }
 
 export const MembersView: React.FC<Props> = ({
@@ -55,6 +63,9 @@ export const MembersView: React.FC<Props> = ({
   onDeleteMember,
   onOpenIdSearch,
   onOpenSignUp,
+  onUpdateMember,
+  onToggleWeekUpcoming,
+  onOpenEmailDashboard,
 }) => {
   const t = translations[lang];
   const isBangla = lang === 'bn';
@@ -62,9 +73,42 @@ export const MembersView: React.FC<Props> = ({
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState<'ALL' | PaymentStatus>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<'ALL' | 'child' | 'teen' | 'youth' | 'patron'>('ALL');
+  const [editingFeeMemberId, setEditingFeeMemberId] = useState<string | null>(null);
+  const [editingFeeValue, setEditingFeeValue] = useState<number>(0);
+
+  const isActiveWeekUpcoming = isWeekUpcoming(activeWeek);
 
   // Current week payments
   const currentWeekPayments = activeWeek ? payments.filter((p) => p.weekId === activeWeek.id) : [];
+
+  const handleSaveInlineFee = (member: Member) => {
+    const cleanFee = Math.max(0, Math.round(Number(editingFeeValue) || 0));
+    if (onUpdateMember) {
+      onUpdateMember({
+        ...member,
+        weeklyAmount: cleanFee,
+        participatesInSports: cleanFee > 0 ? true : member.participatesInSports,
+      });
+    }
+    setEditingFeeMemberId(null);
+  };
+
+  // 1-Click toggle between Weekly -> Monthly -> Both
+  const handleCycleMemberPlan = (member: Member, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAdmin || !onUpdateMember) return;
+    const current = member.contributionType || 'weekly';
+    const nextPlan =
+      current === 'weekly' ? 'monthly' : current === 'monthly' ? 'both' : 'weekly';
+    onUpdateMember({
+      ...member,
+      contributionType: nextPlan,
+      monthlyAmount:
+        member.monthlyAmount && member.monthlyAmount > 0
+          ? member.monthlyAmount
+          : (member.weeklyAmount || 350) * 4,
+    });
+  };
 
   // Filtered members list
   const filtered = members.filter((member) => {
@@ -102,15 +146,54 @@ export const MembersView: React.FC<Props> = ({
               {formatNumber(members.length, isBangla)} {isBangla ? 'জন' : 'total'}
             </span>
           </h2>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
-            {isBangla ? 'নির্বাচিত সপ্তাহ' : 'Active Week'}:{' '}
-            <strong>
-              {isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
-            </strong>
+          <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2 flex-wrap">
+            <span>
+              {isBangla ? 'নির্বাচিত সপ্তাহ' : 'Active Week'}:{' '}
+              <strong>
+                {isBangla && activeWeek.titleBangla ? activeWeek.titleBangla : activeWeek.title}
+              </strong>
+            </span>
+            {isActiveWeekUpcoming && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300 border border-sky-300 dark:border-sky-800">
+                <CalendarClock className="w-3 h-3" />
+                {isBangla ? 'আসন্ন সপ্তাহ (বকেয়া ধরবে না)' : 'Upcoming Week (No Due)'}
+              </span>
+            )}
           </p>
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && onOpenEmailDashboard && (
+            <button
+              onClick={onOpenEmailDashboard}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-sm transition-all"
+            >
+              <Mail className="w-3.5 h-3.5" />
+              <span>{isBangla ? '📧 ইমেইল রিমাইন্ডার' : '📧 Email Center'}</span>
+            </button>
+          )}
+          {isAdmin && onToggleWeekUpcoming && activeWeek && (
+            <button
+              onClick={() => onToggleWeekUpcoming(activeWeek.id, !isActiveWeekUpcoming)}
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl font-bold text-xs shadow-sm transition-all ${
+                isActiveWeekUpcoming
+                  ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  : 'bg-sky-100 dark:bg-sky-950/70 text-sky-800 dark:text-sky-300 border border-sky-300 dark:border-sky-800 hover:bg-sky-200'
+              }`}
+            >
+              <CalendarClock className="w-3.5 h-3.5" />
+              <span>
+                {isActiveWeekUpcoming
+                  ? isBangla
+                    ? 'সপ্তাহটি চালু করুন (চলতি)'
+                    : 'Activate Week Now'
+                  : isBangla
+                  ? 'আসন্ন সপ্তাহ করুন'
+                  : 'Mark as Upcoming'}
+              </span>
+            </button>
+          )}
+
           {onOpenIdSearch && (
             <button
               onClick={onOpenIdSearch}
@@ -143,6 +226,27 @@ export const MembersView: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      {isActiveWeekUpcoming && (
+        <div className="p-3.5 rounded-2xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-sky-900 dark:text-sky-200">
+          <div className="flex items-center gap-2">
+            <CalendarClock className="w-4 h-4 text-sky-600 dark:text-sky-400 shrink-0" />
+            <span>
+              {isBangla
+                ? 'এই সপ্তাহটি বর্তমানে "আসন্ন (Upcoming)" অবস্থায় রয়েছে — তাই যারা এখনো পরিশোধ করেননি তাদের নামে কোনো বকেয়া (Due) যোগ হচ্ছে না।'
+                : 'This week is marked as "Upcoming" — unpaid members are not counted as Due yet.'}
+            </span>
+          </div>
+          {isAdmin && onToggleWeekUpcoming && (
+            <button
+              onClick={() => onToggleWeekUpcoming(activeWeek.id, false)}
+              className="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shrink-0 self-start sm:self-auto"
+            >
+              {isBangla ? '✓ এখনই চলতি সপ্তাহ হিসেবে চালু করুন' : '✓ Activate Week Now'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Search & Filter Toolbar */}
       <div className="flex flex-col sm:flex-row gap-2.5 bg-white dark:bg-slate-900 p-3 rounded-2xl border border-slate-200/80 dark:border-slate-800 shadow-sm">
@@ -225,23 +329,28 @@ export const MembersView: React.FC<Props> = ({
           ) : (
             filtered.map((member) => {
               const isPatronOnly = member.participatesInSports === false;
+              const isMonthlyOnly = member.contributionType === 'monthly';
               const rawPay = currentWeekPayments.find((p) => p.memberId === member.id) || {
                 id: `p-${activeWeek.id}-${member.id}`,
                 seasonId: activeWeek.seasonId,
                 weekId: activeWeek.id,
                 memberId: member.id,
-                expectedAmount: isPatronOnly ? 0 : member.weeklyAmount,
+                expectedAmount: isPatronOnly || isMonthlyOnly ? 0 : member.weeklyAmount,
                 paidAmount: 0,
                 status: 'UNPAID' as const,
                 paymentDate: '',
                 paymentMethod: 'Cash',
               };
               const pay =
-                isPatronOnly && rawPay.paidAmount === 0
+                (isPatronOnly || isMonthlyOnly) && rawPay.paidAmount === 0
                   ? { ...rawPay, expectedAmount: 0 }
                   : rawPay;
 
-              const due = Math.max(pay.expectedAmount - pay.paidAmount, 0);
+              const isUnpaidUpcoming = isActiveWeekUpcoming && pay.paidAmount === 0;
+              const due =
+                isUnpaidUpcoming || (isMonthlyOnly && pay.paidAmount === 0)
+                  ? 0
+                  : Math.max(pay.expectedAmount - pay.paidAmount, 0);
               const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
 
               return (
@@ -274,6 +383,38 @@ export const MembersView: React.FC<Props> = ({
                               ? (isBangla ? '🧑‍🦱 কিশোর' : '🧑‍🦱 Teen')
                               : (isBangla ? '👨‍🦱 যুবক' : '👨‍🦱 Youth')}
                           </span>
+                          {member.participatesInSports !== false && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleCycleMemberPlan(member, e)}
+                              title={
+                                isAdmin
+                                  ? isBangla
+                                    ? 'ক্লিক করে সাপ্তাহিক / মাসিক / উভয়ই পরিবর্তন করুন'
+                                    : 'Click to switch Weekly / Monthly / Both'
+                                  : undefined
+                              }
+                              className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border transition-all ${
+                                member.contributionType === 'monthly'
+                                  ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-800'
+                                  : member.contributionType === 'both'
+                                  ? 'bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-800'
+                                  : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                              }`}
+                            >
+                              {member.contributionType === 'monthly'
+                                ? isBangla
+                                  ? '🗓️ শুধু মাসিক ↻'
+                                  : '🗓️ Monthly ↻'
+                                : member.contributionType === 'both'
+                                ? isBangla
+                                  ? '🔄 সাপ্তাহিক+মাসিক ↻'
+                                  : '🔄 Wk+Mo ↻'
+                                : isBangla
+                                ? '📅 শুধু সাপ্তাহিক ↻'
+                                : '📅 Weekly ↻'}
+                            </button>
+                          )}
                           {member.participatesInSports === false && (
                             <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
                               {isBangla ? '🏛️ শুধু ফান্ডিং' : '🏛️ Patron'}
@@ -284,15 +425,63 @@ export const MembersView: React.FC<Props> = ({
                       </div>
                     </div>
 
-                    <StatusBadge status={pay.status} lang={lang} />
+                    {isMonthlyOnly && pay.paidAmount === 0 ? (
+                      <span className="px-2 py-1 rounded-full text-[10px] font-extrabold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+                        {isBangla ? '🗓️ মাসিক সদস্য' : '🗓️ Monthly'}
+                      </span>
+                    ) : (
+                      <StatusBadge status={pay.status} lang={lang} isUpcoming={isUnpaidUpcoming} />
+                    )}
                   </div>
 
                   <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-xl text-xs">
                     <div>
                       <span className="text-[10px] text-slate-400 block">{t.weekly_amount}</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">
-                        {formatCurrency(pay.expectedAmount, isBangla)}
-                      </span>
+                      {isAdmin && editingFeeMemberId === member.id ? (
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <input
+                            type="number"
+                            min="0"
+                            value={editingFeeValue}
+                            onChange={(e) => setEditingFeeValue(Number(e.target.value))}
+                            className="w-16 px-1.5 py-0.5 text-xs font-bold rounded border border-emerald-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={() => handleSaveInlineFee(member)}
+                            className="p-1 rounded bg-emerald-600 text-white"
+                          >
+                            <Check className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditingFeeMemberId(null)}
+                            className="p-1 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">
+                            {formatCurrency(pay.expectedAmount, isBangla)}
+                          </span>
+                          {isAdmin && onUpdateMember && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingFeeMemberId(member.id);
+                                setEditingFeeValue(member.weeklyAmount || pay.expectedAmount);
+                              }}
+                              title={isBangla ? 'নির্ধারিত ফি পরিবর্তন করুন' : 'Change Determined Fee'}
+                              className="p-0.5 rounded text-emerald-600 hover:bg-emerald-100 dark:hover:bg-emerald-950/60"
+                            >
+                              <Edit2 className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div>
                       <span className="text-[10px] text-slate-400 block">{t.paid_amount}</span>
@@ -307,7 +496,11 @@ export const MembersView: React.FC<Props> = ({
                           due > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
                         }`}
                       >
-                        {formatCurrency(due, isBangla)}
+                        {isUnpaidUpcoming
+                          ? isBangla
+                            ? '৳০ (আসন্ন)'
+                            : '৳0 (Upcoming)'
+                          : formatCurrency(due, isBangla)}
                       </span>
                     </div>
                   </div>
@@ -315,7 +508,15 @@ export const MembersView: React.FC<Props> = ({
                   {/* Actions Row */}
                   <div className="flex items-center justify-between pt-1">
                     <div className="text-[11px] text-slate-400">
-                      {pay.paymentMethod} {pay.paymentDate ? `• ${pay.paymentDate}` : ''}
+                      {pay.paymentDate
+                        ? `${pay.paymentMethod} • ${pay.paymentDate}`
+                        : isUnpaidUpcoming
+                        ? isBangla
+                          ? 'আসন্ন সপ্তাহ (বকেয়া নয়)'
+                          : 'Upcoming Week'
+                        : isBangla
+                        ? 'এখনো পরিশোধ হয়নি'
+                        : 'Not paid yet'}
                     </div>
 
                     <div className="flex items-center gap-1.5">
@@ -413,23 +614,28 @@ export const MembersView: React.FC<Props> = ({
               ) : (
                 filtered.map((member) => {
                   const isPatronOnly = member.participatesInSports === false;
+                  const isMonthlyOnly = member.contributionType === 'monthly';
                   const rawPay = currentWeekPayments.find((p) => p.memberId === member.id) || {
                     id: `p-${activeWeek.id}-${member.id}`,
                     seasonId: activeWeek.seasonId,
                     weekId: activeWeek.id,
                     memberId: member.id,
-                    expectedAmount: isPatronOnly ? 0 : member.weeklyAmount,
+                    expectedAmount: isPatronOnly || isMonthlyOnly ? 0 : member.weeklyAmount,
                     paidAmount: 0,
                     status: 'UNPAID' as const,
                     paymentDate: '',
                     paymentMethod: 'Cash',
                   };
                   const pay =
-                    isPatronOnly && rawPay.paidAmount === 0
+                    (isPatronOnly || isMonthlyOnly) && rawPay.paidAmount === 0
                       ? { ...rawPay, expectedAmount: 0 }
                       : rawPay;
 
-                  const due = Math.max(pay.expectedAmount - pay.paidAmount, 0);
+                  const isUnpaidUpcoming = isActiveWeekUpcoming && pay.paidAmount === 0;
+                  const due =
+                    isUnpaidUpcoming || (isMonthlyOnly && pay.paidAmount === 0)
+                      ? 0
+                      : Math.max(pay.expectedAmount - pay.paidAmount, 0);
                   const memberName = isBangla && member.banglaName ? member.banglaName : member.name;
 
                   return (
@@ -464,6 +670,38 @@ export const MembersView: React.FC<Props> = ({
                                   ? (isBangla ? '🧑‍🦱 কিশোর' : '🧑‍🦱 Teen')
                                   : (isBangla ? '👨‍🦱 যুবক' : '👨‍🦱 Youth')}
                               </span>
+                              {member.participatesInSports !== false && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => handleCycleMemberPlan(member, e)}
+                                  title={
+                                    isAdmin
+                                      ? isBangla
+                                        ? 'ক্লিক করে সাপ্তাহিক / মাসিক / উভয়ই পরিবর্তন করুন'
+                                        : 'Click to switch Weekly / Monthly / Both'
+                                      : undefined
+                                  }
+                                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md border transition-all ${
+                                    member.contributionType === 'monthly'
+                                      ? 'bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-200 border-purple-300 dark:border-purple-800'
+                                      : member.contributionType === 'both'
+                                      ? 'bg-teal-100 dark:bg-teal-950/80 text-teal-800 dark:text-teal-200 border-teal-300 dark:border-teal-800'
+                                      : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800'
+                                  }`}
+                                >
+                                  {member.contributionType === 'monthly'
+                                    ? isBangla
+                                      ? '🗓️ শুধু মাসিক ↻'
+                                      : '🗓️ Monthly ↻'
+                                    : member.contributionType === 'both'
+                                    ? isBangla
+                                      ? '🔄 সাপ্তাহিক+মাসিক ↻'
+                                      : '🔄 Wk+Mo ↻'
+                                    : isBangla
+                                    ? '📅 শুধু সাপ্তাহিক ↻'
+                                    : '📅 Weekly ↻'}
+                                </button>
+                              )}
                               {member.participatesInSports === false && (
                                 <span className="text-[10px] font-bold px-1.5 py-0.2 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300">
                                   {isBangla ? '🏛️ শুধু ফান্ডিং' : '🏛️ Patron'}
@@ -478,7 +716,55 @@ export const MembersView: React.FC<Props> = ({
                       </td>
 
                       <td className="py-3.5 px-4 font-semibold text-slate-700 dark:text-slate-300">
-                        {formatCurrency(pay.expectedAmount, isBangla)}
+                        {isAdmin && editingFeeMemberId === member.id ? (
+                          <div className="flex items-center gap-1">
+                            <input
+                              type="number"
+                              min="0"
+                              value={editingFeeValue}
+                              onChange={(e) => setEditingFeeValue(Number(e.target.value))}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleSaveInlineFee(member);
+                                if (e.key === 'Escape') setEditingFeeMemberId(null);
+                              }}
+                              className="w-20 px-2 py-1 text-xs font-bold rounded-lg border border-emerald-500 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                              autoFocus
+                            />
+                            <button
+                              type="button"
+                              onClick={() => handleSaveInlineFee(member)}
+                              className="p-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-500"
+                              title={isBangla ? 'সেভ করুন' : 'Save'}
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditingFeeMemberId(null)}
+                              className="p-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                              title={isBangla ? 'বাতিল' : 'Cancel'}
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1.5">
+                            <span>{formatCurrency(pay.expectedAmount, isBangla)}</span>
+                            {isAdmin && onUpdateMember && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingFeeMemberId(member.id);
+                                  setEditingFeeValue(member.weeklyAmount || pay.expectedAmount);
+                                }}
+                                title={isBangla ? 'নির্ধারিত ফি পরিবর্তন করুন' : 'Edit Determined Fee'}
+                                className="p-1 rounded-lg text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 transition-colors"
+                              >
+                                <Edit2 className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 font-black font-mono text-emerald-600 dark:text-emerald-400">
@@ -490,15 +776,39 @@ export const MembersView: React.FC<Props> = ({
                           due > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-slate-400'
                         }`}
                       >
-                        {formatCurrency(due, isBangla)}
+                        {isUnpaidUpcoming
+                          ? isBangla
+                            ? '৳০ (আসন্ন)'
+                            : '৳0 (Upcoming)'
+                          : isMonthlyOnly && pay.paidAmount === 0
+                          ? isBangla
+                            ? '৳০ (মাসিক)'
+                            : '৳0 (Monthly)'
+                          : formatCurrency(due, isBangla)}
                       </td>
 
                       <td className="py-3.5 px-4">
-                        <StatusBadge status={pay.status} lang={lang} />
+                        {isMonthlyOnly && pay.paidAmount === 0 ? (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300 dark:border-purple-800">
+                            🗓️ {isBangla ? 'মাসিক সদস্য' : 'Monthly Plan'}
+                          </span>
+                        ) : (
+                          <StatusBadge status={pay.status} lang={lang} isUpcoming={isUnpaidUpcoming} />
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4 text-slate-500 dark:text-slate-400">
-                        {pay.paymentDate || '—'}
+                        {pay.paymentDate ? (
+                          pay.paymentDate
+                        ) : isUnpaidUpcoming ? (
+                          <span className="text-sky-600 dark:text-sky-400 font-semibold text-[11px]">
+                            {isBangla ? 'আসন্ন সপ্তাহ' : 'Upcoming'}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400 text-[11px]">
+                            {isBangla ? 'এখনো পরিশোধ হয়নি' : 'Pending'}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-3.5 px-4">

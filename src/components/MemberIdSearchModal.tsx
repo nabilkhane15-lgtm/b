@@ -11,6 +11,7 @@ import {
   LeaderboardAward,
 } from '../types';
 import { processImageFile } from '../utils/imageUtils';
+import { isWeekUpcoming, isMonthUpcoming } from '../utils/accounting';
 
 interface MemberIdSearchModalProps {
   isOpen: boolean;
@@ -117,15 +118,23 @@ export const MemberIdSearchModal: React.FC<MemberIdSearchModalProps> = ({
       (p) => p.memberId === activeMember.id && p.monthId === activeMonthId
     );
 
-    // Total weekly dues & paid
+    // Total weekly dues & paid (excluding upcoming unpaid weeks)
+    const upcomingWeekIds = new Set(weeks.filter((w) => isWeekUpcoming(w)).map((w) => w.id));
     const memberPayments = payments.filter((p) => p.memberId === activeMember.id);
-    const totalWeeklyExpected = memberPayments.reduce((s, p) => s + p.expectedAmount, 0);
+    const totalWeeklyExpected = memberPayments.reduce(
+      (s, p) => s + (upcomingWeekIds.has(p.weekId) && (p.paidAmount || 0) === 0 ? 0 : p.expectedAmount),
+      0
+    );
     const totalWeeklyPaid = memberPayments.reduce((s, p) => s + p.paidAmount, 0);
     const totalWeeklyDue = Math.max(0, totalWeeklyExpected - totalWeeklyPaid);
 
-    // Total monthly dues & paid
+    // Total monthly dues & paid (excluding upcoming unpaid months)
+    const upcomingMonthIds = new Set(months.filter((m) => isMonthUpcoming(m)).map((m) => m.id));
     const memberMonthly = monthlyPayments.filter((p) => p.memberId === activeMember.id);
-    const totalMonthlyExpected = memberMonthly.reduce((s, p) => s + p.expectedAmount, 0);
+    const totalMonthlyExpected = memberMonthly.reduce(
+      (s, p) => s + (upcomingMonthIds.has(p.monthId) && (p.paidAmount || 0) === 0 ? 0 : p.expectedAmount),
+      0
+    );
     const totalMonthlyPaid = memberMonthly.reduce((s, p) => s + p.paidAmount, 0);
     const totalMonthlyDue = Math.max(0, totalMonthlyExpected - totalMonthlyPaid);
 

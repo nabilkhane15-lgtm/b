@@ -67,6 +67,8 @@ import {
   fetchAdminPinFromFirestore,
   isFirebaseSyncEnabled,
 } from './utils/firebase';
+import { applyPaymentCorrection } from './utils/accounting';
+import { sanitizeMemberSelfUpdate } from './utils/security';
 
 // Components
 import { Navbar } from './components/Navbar';
@@ -102,6 +104,8 @@ import { SeasonView } from './views/SeasonView';
 import { SettingsView } from './views/SettingsView';
 import { LeaderboardView } from './views/LeaderboardView';
 import { MemberSettingsView } from './views/MemberSettingsView';
+import { EmailDashboardView } from './views/EmailDashboardView';
+import { triggerAutoPaymentEmail } from './utils/emailService';
 
 export const App: React.FC = () => {
   // Localization
@@ -518,6 +522,19 @@ export const App: React.FC = () => {
       isClosed: false,
     };
 
+  const activeMonth: MonthRecord =
+    months.find((m) => m.id === activeMonthId) ||
+    months[months.length - 1] || {
+      id: 'm1',
+      seasonId: activeSeason.id,
+      monthNumber: 1,
+      year: 2026,
+      title: 'January 2026',
+      titleBangla: 'জানুয়ারি ২০২৬',
+      targetAmount: 15000,
+      isClosed: false,
+    };
+
   // Helper actions
   const handleToggleLang = () => {
     setLang((prev) => (prev === 'bn' ? 'en' : 'bn'));
@@ -620,17 +637,73 @@ export const App: React.FC = () => {
     setShowMemberAuthModal(true);
   };
 
-  // Payment update
-  const handleSavePayment = (updated: Payment) => {
-    const updatedList = payments.map((p) => (p.id === updated.id ? updated : p));
+  // Payment update (with optional permanent member weekly fee update)
+  const handleSavePayment = (updated: Payment, updateMemberDefaultFee?: number) => {
+    let updatedList = payments.map((p) => (p.id === updated.id ? updated : p));
     if (!payments.some((p) => p.id === updated.id)) {
       updatedList.push(updated);
     }
+
+    let updatedMembersList: Member[] | undefined;
+    if (typeof updateMemberDefaultFee === 'number' && updateMemberDefaultFee >= 0) {
+      const closedWeekIds = new Set(weeks.filter((w) => w.isClosed).map((w) => w.id));
+      updatedMembersList = members.map((m) =>
+        m.id === updated.memberId ? { ...m, weeklyAmount: updateMemberDefaultFee } : m
+      );
+      setMembers(updatedMembersList);
+      saveMembers(updatedMembersList);
+
+      updatedList = updatedList.map((p) => {
+        if (
+          p.memberId === updated.memberId &&
+          p.id !== updated.id &&
+          (p.paidAmount || 0) === 0 &&
+          !closedWeekIds.has(p.weekId)
+        ) {
+          return { ...p, expectedAmount: updateMemberDefaultFee };
+        }
+        return p;
+      });
+    }
+
     setPayments(updatedList);
     savePayments(updatedList);
     setPaymentEditTarget(null);
-    pushDataToCloud({ payments: updatedList });
-    showToast(lang === 'bn' ? 'পেমেন্ট সফলভাবে সংরক্ষিত হয়েছে' : 'Payment record updated');
+    pushDataToCloud(
+      updatedMembersList
+        ? { payments: updatedList, members: updatedMembersList }
+        : { payments: updatedList }
+    );
+
+    if (updated.expectedAmount > 0) {
+      const targetMem = (updatedMembersList || members).find((m) => m.id === updated.memberId);
+      const targetWk = weeks.find((w) => w.id === updated.weekId) || activeWeek;
+      if (targetMem?.email) {
+        triggerAutoPaymentEmail({
+          member: targetMem,
+          periodTitle:
+            lang === 'bn'
+              ? `${targetWk.titleBangla || targetWk.title} (${targetWk.startDate})`
+              : `${targetWk.title} (${targetWk.startDate})`,
+          expectedAmount: updated.expectedAmount,
+          paidAmount: updated.paidAmount,
+          paymentDate: updated.paymentDate || new Date().toLocaleDateString('bn-BD'),
+          paymentMethod: updated.paymentMethod || 'Cash',
+          clubSettings,
+          isBangla: lang === 'bn',
+        });
+      }
+    }
+
+    showToast(
+      typeof updateMemberDefaultFee === 'number'
+        ? lang === 'bn'
+          ? 'পেমেন্ট ও সদস্যের নির্ধারিত ফি সংরক্ষিত হয়েছে'
+          : 'Payment & member fee updated'
+        : lang === 'bn'
+        ? 'পেমেন্ট সফলভাবে সংরক্ষিত হয়েছে'
+        : 'Payment record updated'
+    );
   };
 
   // Quick mark paid or unpaid (safe against hyphenated weekId / memberId like w-123 and m-456)
@@ -651,35 +724,72 @@ export const App: React.FC = () => {
       (p) => p.id === paymentId || (targetMemberId && p.weekId === targetWeekId && p.memberId === targetMemberId)
     );
 
+    const actorName = isAdmin
+      ? clubSettings.adminName || adminProfile.name || 'Master Admin'
+      : currentSubAdmin?.name || 'Sub-Admin';
+    const actorRole = isAdmin ? 'MASTER_ADMIN' : 'SUB_ADMIN';
+
     let updatedList: Payment[];
     if (existing) {
       updatedList = payments.map((p) =>
         p.id === existing.id
-          ? {
-              ...p,
-              status,
+          ? applyPaymentCorrection(p, {
               paidAmount: status === 'PAID' ? expected : 0,
-              paymentDate: status === 'PAID' ? new Date().toLocaleDateString('en-GB') : '',
-            }
+              expectedAmount: expected,
+              actorName,
+              actorRole,
+              reason:
+                status === 'PAID'
+                  ? 'Quick marked PAID'
+                  : 'Quick marked UNPAID / Reverted to due',
+            })
           : p
       );
     } else {
-      const newPayment: Payment = {
+      const basePayment: Payment = {
         id: paymentId,
         seasonId: activeSeason.id,
         weekId: targetWeekId,
         memberId: targetMemberId,
         expectedAmount: expected,
-        paidAmount: status === 'PAID' ? expected : 0,
-        status,
-        paymentDate: status === 'PAID' ? new Date().toLocaleDateString('en-GB') : '',
+        paidAmount: 0,
+        status: 'UNPAID',
+        paymentDate: '',
         paymentMethod: 'bKash',
       };
+      const newPayment = applyPaymentCorrection(basePayment, {
+        paidAmount: status === 'PAID' ? expected : 0,
+        expectedAmount: expected,
+        method: 'bKash',
+        actorName,
+        actorRole,
+      });
       updatedList = [...payments, newPayment];
     }
     setPayments(updatedList);
     savePayments(updatedList);
     pushDataToCloud({ payments: updatedList });
+
+    if (expected > 0 && targetMemberId) {
+      const targetMem = members.find((m) => m.id === targetMemberId);
+      const targetWk = weeks.find((w) => w.id === targetWeekId) || activeWeek;
+      if (targetMem?.email) {
+        triggerAutoPaymentEmail({
+          member: targetMem,
+          periodTitle:
+            lang === 'bn'
+              ? `${targetWk.titleBangla || targetWk.title} (${targetWk.startDate})`
+              : `${targetWk.title} (${targetWk.startDate})`,
+          expectedAmount: expected,
+          paidAmount: status === 'PAID' ? expected : 0,
+          paymentDate: new Date().toLocaleDateString('bn-BD'),
+          paymentMethod: existing?.paymentMethod || 'bKash',
+          clubSettings,
+          isBangla: lang === 'bn',
+        });
+      }
+    }
+
     showToast(
       status === 'PAID'
         ? lang === 'bn'
@@ -788,10 +898,17 @@ export const App: React.FC = () => {
 
   // Update Member (Demographics, Category, Role, Sports participation)
   const handleUpdateMember = (updatedMember: Member) => {
+    const existingMember = members.find((m) => m.id === updatedMember.id);
+    // Security guard: if caller is not Admin or Sub-Admin with manage_members, sanitize self-service update
+    const safeMember =
+      !isAdmin && !canManageMembers && existingMember
+        ? sanitizeMemberSelfUpdate(existingMember, updatedMember)
+        : updatedMember;
+
     const effectiveWeekly =
-      updatedMember.participatesInSports === false ? 0 : updatedMember.weeklyAmount;
+      safeMember.participatesInSports === false ? 0 : safeMember.weeklyAmount;
     const normalizedMember: Member = {
-      ...updatedMember,
+      ...safeMember,
       weeklyAmount: effectiveWeekly,
     };
 
@@ -799,18 +916,46 @@ export const App: React.FC = () => {
     setMembers(updated);
     saveMembers(updated);
 
-    // Sync any UNPAID weekly payment slots for this member so non-playing patrons don't show stale dues
+    const closedWeekIds = new Set(weeks.filter((w) => w.isClosed).map((w) => w.id));
+    const closedMonthIds = new Set(months.filter((m) => m.isClosed).map((m) => m.id));
+
+    // Sync UNPAID weekly payment slots:
+    // - If participatesInSports === false or contributionType === 'monthly', clear unpaid obligations to 0.
+    // - Otherwise, update expectedAmount only on open (!isClosed) unpaid weeks so closed historical weeks keep their snapshot.
     const updatedPayments = payments.map((p) => {
       if (p.memberId === normalizedMember.id && (p.paidAmount || 0) === 0) {
-        return {
-          ...p,
-          expectedAmount: effectiveWeekly,
-        };
+        if (
+          normalizedMember.participatesInSports === false ||
+          normalizedMember.contributionType === 'monthly'
+        ) {
+          return { ...p, expectedAmount: 0 };
+        }
+        if (!closedWeekIds.has(p.weekId)) {
+          return { ...p, expectedAmount: effectiveWeekly };
+        }
       }
       return p;
     });
     setPayments(updatedPayments);
     savePayments(updatedPayments);
+
+    // Sync UNPAID monthly payment slots on open months when monthlyAmount or contributionType changes
+    const effectiveMonthly =
+      normalizedMember.contributionType === 'weekly'
+        ? 0
+        : normalizedMember.monthlyAmount ?? clubSettings.defaultMonthlyFee ?? 1400;
+    const updatedMonthlyPayments = monthlyPayments.map((mp) => {
+      if (
+        mp.memberId === normalizedMember.id &&
+        (mp.paidAmount || 0) === 0 &&
+        !closedMonthIds.has(mp.monthId)
+      ) {
+        return { ...mp, expectedAmount: effectiveMonthly };
+      }
+      return mp;
+    });
+    setMonthlyPayments(updatedMonthlyPayments);
+    saveMonthlyPayments(updatedMonthlyPayments);
 
     if (selectedMemberProfile && selectedMemberProfile.id === normalizedMember.id) {
       setSelectedMemberProfile(normalizedMember);
@@ -818,13 +963,20 @@ export const App: React.FC = () => {
     if (currentLoggedInMember && currentLoggedInMember.id === normalizedMember.id) {
       setCurrentLoggedInMember(normalizedMember);
     }
-    pushDataToCloud({ members: updated, payments: updatedPayments }).then((res) => {
+    if (currentSubAdmin && currentSubAdmin.id === normalizedMember.id) {
+      setCurrentSubAdmin(normalizedMember);
+    }
+    pushDataToCloud({
+      members: updated,
+      payments: updatedPayments,
+      monthlyPayments: updatedMonthlyPayments,
+    }).then((res) => {
       if (res.success && (res as any).mergedData?.members) {
         setMembers((res as any).mergedData.members);
         saveMembers((res as any).mergedData.members);
       }
     });
-    showToast(lang === 'bn' ? 'সদস্যের তথ্য সফলভাবে হালনাগাদ হয়েছে' : 'Member profile updated');
+    showToast(lang === 'bn' ? 'সদস্যের তথ্য ও নির্ধারিত ফি হালনাগাদ হয়েছে' : 'Member profile & fee updated');
   };
 
   // Custom Funds Handlers
@@ -943,6 +1095,42 @@ export const App: React.FC = () => {
     showToast(lang === 'bn' ? 'সপ্তাহ ও পেমেন্ট হিসাব মুছে ফেলা হয়েছে' : 'Week and records deleted');
   };
 
+  // Update Week (Target, Upcoming status, etc.)
+  const handleUpdateWeek = (updatedWeek: Week) => {
+    const updatedWeeks = weeks.map((w) => (w.id === updatedWeek.id ? updatedWeek : w));
+    setWeeks(updatedWeeks);
+    saveWeeks(updatedWeeks);
+    pushDataToCloud({ weeks: updatedWeeks });
+    showToast(
+      lang === 'bn'
+        ? `${updatedWeek.titleBangla || updatedWeek.title} হালনাগাদ হয়েছে`
+        : `${updatedWeek.title} updated`
+    );
+  };
+
+  const handleToggleWeekUpcoming = (weekId: string, isUpcoming: boolean) => {
+    const updatedWeeks = weeks.map((w) => {
+      if (w.id !== weekId) return w;
+      const nextEndDate =
+        !isUpcoming && w.endDate?.trim().toLowerCase() === 'upcoming'
+          ? w.startDate
+          : w.endDate;
+      return { ...w, isUpcoming, endDate: nextEndDate };
+    });
+    setWeeks(updatedWeeks);
+    saveWeeks(updatedWeeks);
+    pushDataToCloud({ weeks: updatedWeeks });
+    showToast(
+      isUpcoming
+        ? lang === 'bn'
+          ? 'সপ্তাহটি আসন্ন (Upcoming) হিসেবে চিহ্নিত হয়েছে — বকেয়া হিসাব হবে না'
+          : 'Week marked as Upcoming (excluded from due)'
+        : lang === 'bn'
+        ? 'সপ্তাহটি চলতি (Active) হিসেবে চালু হয়েছে'
+        : 'Week activated'
+    );
+  };
+
   // Update Club Settings
   const handleUpdateClubSettings = (newSettings: ClubSettings) => {
     setClubSettings(newSettings);
@@ -950,6 +1138,68 @@ export const App: React.FC = () => {
     pushDataToCloud({ clubSettings: newSettings });
     showToast(
       lang === 'bn' ? 'ক্লাবের তথ্য সফলভাবে আপডেট হয়েছে' : 'Club settings updated successfully'
+    );
+  };
+
+  // Sync all existing members' determined fees according to their category in ClubSettings
+  const handleSyncAllMemberFees = () => {
+    const childFee = clubSettings.childWeeklyFee ?? 100;
+    const teenFee = clubSettings.teenWeeklyFee ?? 200;
+    const youthFee = clubSettings.youthWeeklyFee ?? clubSettings.defaultWeeklyFee ?? 350;
+    const monthlyFee = clubSettings.defaultMonthlyFee ?? 1400;
+
+    const updatedMembers = members.map((m) => {
+      if (m.participatesInSports === false) {
+        return { ...m, weeklyAmount: 0 };
+      }
+      const cat = m.memberCategory || 'youth';
+      const newWeekly = cat === 'child' ? childFee : cat === 'teen' ? teenFee : youthFee;
+      return {
+        ...m,
+        weeklyAmount: newWeekly,
+        monthlyAmount: m.monthlyAmount ? newWeekly * 4 : monthlyFee,
+      };
+    });
+    setMembers(updatedMembers);
+    saveMembers(updatedMembers);
+
+    const memberFeeMap = new Map<string, Member>(updatedMembers.map((m) => [m.id, m]));
+    const closedWeekIds = new Set(weeks.filter((w) => w.isClosed).map((w) => w.id));
+    const closedMonthIds = new Set(months.filter((m) => m.isClosed).map((m) => m.id));
+
+    const updatedPayments = payments.map((p) => {
+      if ((p.paidAmount || 0) === 0 && !closedWeekIds.has(p.weekId)) {
+        const mem = memberFeeMap.get(p.memberId);
+        if (mem) {
+          return { ...p, expectedAmount: mem.weeklyAmount };
+        }
+      }
+      return p;
+    });
+    setPayments(updatedPayments);
+    savePayments(updatedPayments);
+
+    const updatedMonthlyPayments = monthlyPayments.map((mp) => {
+      if ((mp.paidAmount || 0) === 0 && !closedMonthIds.has(mp.monthId)) {
+        const mem = memberFeeMap.get(mp.memberId);
+        if (mem) {
+          return { ...mp, expectedAmount: mem.monthlyAmount || monthlyFee };
+        }
+      }
+      return mp;
+    });
+    setMonthlyPayments(updatedMonthlyPayments);
+    saveMonthlyPayments(updatedMonthlyPayments);
+
+    pushDataToCloud({
+      members: updatedMembers,
+      payments: updatedPayments,
+      monthlyPayments: updatedMonthlyPayments,
+    });
+    showToast(
+      lang === 'bn'
+        ? 'সকল সদস্যের নির্ধারিত ফি ও চলতি হিসাব আপডেট হয়েছে'
+        : 'All member fees updated'
     );
   };
 
@@ -1090,16 +1340,87 @@ export const App: React.FC = () => {
     showToast(lang === 'bn' ? 'মাসিক হিসাব মুছে ফেলা হয়েছে' : 'Month record deleted');
   };
 
-  const handleSaveMonthlyPayment = (updated: MonthlyPayment) => {
-    const updatedList = monthlyPayments.map((p) => (p.id === updated.id ? updated : p));
+  const handleUpdateMonth = (updatedMonth: MonthRecord) => {
+    const updatedMonths = months.map((m) => (m.id === updatedMonth.id ? updatedMonth : m));
+    setMonths(updatedMonths);
+    saveMonths(updatedMonths);
+    pushDataToCloud({ months: updatedMonths });
+    showToast(
+      lang === 'bn'
+        ? `${updatedMonth.titleBangla || updatedMonth.title} হালনাগাদ হয়েছে`
+        : `${updatedMonth.title} updated`
+    );
+  };
+
+  const handleSaveMonthlyPayment = (
+    updated: MonthlyPayment,
+    updateMemberDefaultFee?: number
+  ) => {
+    let updatedList = monthlyPayments.map((p) => (p.id === updated.id ? updated : p));
     if (!monthlyPayments.some((p) => p.id === updated.id)) {
       updatedList.push(updated);
     }
+
+    let updatedMembersList: Member[] | undefined;
+    if (typeof updateMemberDefaultFee === 'number' && updateMemberDefaultFee >= 0) {
+      const closedMonthIds = new Set(months.filter((m) => m.isClosed).map((m) => m.id));
+      updatedMembersList = members.map((m) =>
+        m.id === updated.memberId ? { ...m, monthlyAmount: updateMemberDefaultFee } : m
+      );
+      setMembers(updatedMembersList);
+      saveMembers(updatedMembersList);
+
+      updatedList = updatedList.map((mp) => {
+        if (
+          mp.memberId === updated.memberId &&
+          mp.id !== updated.id &&
+          (mp.paidAmount || 0) === 0 &&
+          !closedMonthIds.has(mp.monthId)
+        ) {
+          return { ...mp, expectedAmount: updateMemberDefaultFee };
+        }
+        return mp;
+      });
+    }
+
     setMonthlyPayments(updatedList);
     saveMonthlyPayments(updatedList);
     setMonthlyPaymentTarget(null);
-    pushDataToCloud({ monthlyPayments: updatedList });
-    showToast(lang === 'bn' ? 'মাসিক চাঁদা সংরক্ষিত হয়েছে' : 'Monthly fee record updated');
+    pushDataToCloud(
+      updatedMembersList
+        ? { monthlyPayments: updatedList, members: updatedMembersList }
+        : { monthlyPayments: updatedList }
+    );
+
+    if (updated.expectedAmount > 0) {
+      const targetMem = (updatedMembersList || members).find((m) => m.id === updated.memberId);
+      const targetMo = months.find((m) => m.id === updated.monthId) || activeMonth;
+      if (targetMem?.email) {
+        triggerAutoPaymentEmail({
+          member: targetMem,
+          periodTitle:
+            lang === 'bn'
+              ? `${targetMo.titleBangla || targetMo.title} (${targetMo.year})`
+              : `${targetMo.title} (${targetMo.year})`,
+          expectedAmount: updated.expectedAmount,
+          paidAmount: updated.paidAmount,
+          paymentDate: updated.paymentDate || new Date().toLocaleDateString('bn-BD'),
+          paymentMethod: updated.paymentMethod || 'Cash',
+          clubSettings,
+          isBangla: lang === 'bn',
+        });
+      }
+    }
+
+    showToast(
+      typeof updateMemberDefaultFee === 'number'
+        ? lang === 'bn'
+          ? 'মাসিক চাঁদা ও সদস্যের নির্ধারিত মাসিক ফি সংরক্ষিত হয়েছে'
+          : 'Monthly fee & member default updated'
+        : lang === 'bn'
+        ? 'মাসিক চাঁদা সংরক্ষিত হয়েছে'
+        : 'Monthly fee record updated'
+    );
   };
 
   // Sonsoy / Savings Fund Handlers
@@ -1419,6 +1740,27 @@ export const App: React.FC = () => {
             onDeleteMember={handleDeleteMember}
             onOpenIdSearch={() => setShowIdSearchModal(true)}
             onOpenSignUp={() => handleOpenAuth('signup')}
+            onUpdateMember={handleUpdateMember}
+            onToggleWeekUpcoming={handleToggleWeekUpcoming}
+            onOpenEmailDashboard={canManageCollection ? () => setActiveTab('email') : undefined}
+          />
+        )}
+
+        {activeTab === 'email' && (
+          <EmailDashboardView
+            members={members}
+            weeks={weeks}
+            months={months}
+            payments={payments}
+            monthlyPayments={monthlyPayments}
+            funds={funds}
+            fundContributions={fundContributions}
+            activeWeek={activeWeek}
+            activeMonth={activeMonth}
+            clubSettings={clubSettings}
+            lang={lang}
+            isAdmin={canManageCollection}
+            onUpdateMember={handleUpdateMember}
           />
         )}
 
@@ -1467,6 +1809,8 @@ export const App: React.FC = () => {
               setSavingsModalConfig({ isOpen: true, defaultMemberId: memberId })
             }
             onDeleteSavings={handleDeleteSavings}
+            onUpdateWeek={handleUpdateWeek}
+            onUpdateMonth={handleUpdateMonth}
           />
         )}
 
@@ -1560,12 +1904,15 @@ export const App: React.FC = () => {
               onOpenFirebaseModal={isAdmin ? () => setShowFirebaseModal(true) : undefined}
               adminProfile={adminProfile}
               onOpenAdminProfile={() => setShowAdminProfileModal(true)}
+              onSyncAllMemberFees={handleSyncAllMemberFees}
             />
           ) : currentLoggedInMember ? (
             <MemberSettingsView
               member={currentLoggedInMember}
               payments={payments}
               monthlyPayments={monthlyPayments}
+              weeks={weeks}
+              months={months}
               savingsDeposits={savingsDeposits}
               fundContributions={fundContributions}
               funds={funds}

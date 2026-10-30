@@ -1,20 +1,69 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Healthcheck ping for connection test
-    match /_connection_test/{docId} {
-      allow read, write: if request.time < timestamp.date(2027, 12, 31);
+    function isValidString(val, maxLen) {
+      return val is string && val.size() <= maxLen;
     }
 
-    // Allow public read for club members, and updates with timestamp limit
+    function isValidTimestampField(data) {
+      return !('updatedAt' in data) || (data.updatedAt is int && data.updatedAt > 0) || (data.updatedAt is string);
+    }
+
+    function isValidClubRootDoc(data) {
+      return data is map
+        && data.keys().size() <= 40
+        && isValidTimestampField(data);
+    }
+
+    function isValidClubSnapshotDoc(data) {
+      return data is map
+        && data.keys().size() <= 50
+        && isValidTimestampField(data)
+        && (!('members' in data) || data.members is list)
+        && (!('weeks' in data) || data.weeks is list)
+        && (!('payments' in data) || data.payments is list)
+        && (!('expenses' in data) || data.expenses is list)
+        && (!('funds' in data) || data.funds is list)
+        && (!('fundContributions' in data) || data.fundContributions is list)
+        && (!('fundExpenses' in data) || data.fundExpenses is list)
+        && (!('savings' in data) || data.savings is list)
+        && (!('picnics' in data) || data.picnics is list);
+    }
+
+    // Healthcheck ping for connection test
+    match /_connection_test/{docId} {
+      allow read: if true;
+      allow write: if request.resource.data is map && request.resource.data.keys().size() <= 10;
+    }
+
+    // Club root document (supports public transparency view + validated sync writes)
     match /clubs/{clubId} {
       allow read: if true;
-      allow write: if request.time < timestamp.date(2027, 12, 31);
+      allow create, update: if isValidString(clubId, 128) && isValidClubRootDoc(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Club latest snapshot & structured subcollections
+    match /clubs/{clubId}/snapshots/{snapshotId} {
+      allow read: if true;
+      allow create, update: if isValidString(clubId, 128)
+        && isValidString(snapshotId, 64)
+        && isValidClubSnapshotDoc(request.resource.data);
+      allow delete: if false;
+    }
+
+    // Audit logs subcollection (append-only, immutable once written)
+    match /clubs/{clubId}/auditLogs/{logId} {
+      allow read: if true;
+      allow create: if request.resource.data is map
+        && request.resource.data.keys().hasAll(['id', 'entityType', 'entityId', 'actorRole', 'timestamp']);
+      allow update, delete: if false;
     }
 
     match /clubs/{clubId}/{document=**} {
       allow read: if true;
-      allow write: if request.time < timestamp.date(2027, 12, 31);
+      allow create, update: if request.resource.data is map && request.resource.data.keys().size() <= 60;
+      allow delete: if false;
     }
   }
 }
